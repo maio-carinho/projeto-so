@@ -156,7 +156,7 @@ static long blocos_precisos(long tamanho) {
     return (tamanho + TAM_BLOCO - 1) / TAM_BLOCO;         
 }
 
-static void gravar_blocos_arquivo(const No *no) {
+static void gravar_blocos_arquivo(const No *no, const char *conteudo) {
     unsigned char buffer[TAM_BLOCO];
 
     memset(buffer, 0, sizeof buffer);                     
@@ -169,18 +169,21 @@ static void gravar_blocos_arquivo(const No *no) {
         long ocupado = no->tamanho - offset;
         if (ocupado > TAM_BLOCO) ocupado = TAM_BLOCO;
         memset(buffer, 0, sizeof buffer);
-        for (long j = 0; j < ocupado; j++)
-            buffer[j] = (unsigned char)('a' + (offset + j) % 26);
+        if (conteudo)
+            memcpy(buffer, conteudo + offset, (size_t)ocupado);
+        else
+            for (long j = 0; j < ocupado; j++)
+                buffer[j] = (unsigned char)('a' + (offset + j) % 26);
         disco_gravar_bloco(no->blocos[k], buffer);
     }
 }
 
-static void alocar_arquivo(No *no) {
+static void alocar_arquivo(No *no, const char *conteudo) {
     no->n_blocos = (int)blocos_precisos(no->tamanho);
     no->inode = disco_alocar_bloco();
     for (int k = 0; k < no->n_blocos; k++)
         no->blocos[k] = disco_alocar_bloco();
-    gravar_blocos_arquivo(no);
+    gravar_blocos_arquivo(no, conteudo);
 }
 
 static void liberar_arquivo(No *no) {
@@ -238,7 +241,42 @@ int cmd_create(int argc, char **argv) {
         return reg_erro("Disco cheio: não há blocos livres suficientes.");
 
     No *no = novo_no(nome, 0, pai, tamanho);
-    alocar_arquivo(no);
+    alocar_arquivo(no, NULL);
+    inserir_filho(pai, no);
+    return 0;
+}
+
+int cmd_write_file(int argc, char **argv) {
+    if (argc < 2)
+        return reg_erro("Uso: write_file <caminho> \"<texto>\"   ou   write_file <caminho> --size <tamanho>");
+
+    const char *conteudo = NULL;
+    long tamanho;
+    if (strcmp(argv[1], "--size") == 0) {
+        if (get_tamanho_arg(argc, argv, &tamanho) != 0) return -1;
+    } else {
+        conteudo = argv[1];
+        tamanho = (long)strlen(conteudo);
+    }
+
+    No *existente;
+    if (resolve(argv[0], &existente) == 0) {
+        if (existente->pasta) return reg_erro("É um diretório; não é possível gravar nele.");
+        long disponivel = livres() + existente->n_blocos + 1;
+        if (disponivel < blocos_precisos(tamanho) + 1)
+            return reg_erro("Disco cheio: não há blocos livres suficientes.");
+        liberar_arquivo(existente);
+        existente->tamanho = tamanho;
+        alocar_arquivo(existente, conteudo);
+        return 0;
+    }
+
+    No *pai; char nome[TAM_NOME];
+    if (separar_pai(argv[0], &pai, nome) != 0) return -1;
+    if (livres() < blocos_precisos(tamanho) + 1)
+        return reg_erro("Disco cheio: não há blocos livres suficientes.");
+    No *no = novo_no(nome, 0, pai, tamanho);
+    alocar_arquivo(no, conteudo);
     inserir_filho(pai, no);
     return 0;
 }
@@ -337,7 +375,7 @@ int cmd_update(int argc, char **argv) {
 
     liberar_arquivo(no);
     no->tamanho = novo_tamanho;
-    alocar_arquivo(no);
+    alocar_arquivo(no, NULL);
     return 0;
 }
 

@@ -9,6 +9,7 @@ void fs_cwd_path(char *out, size_t cap);
 
 int cmd_mkdir(int argc, char **argv);
 int cmd_create(int argc, char **argv);
+int cmd_write_file(int argc, char **argv);
 int cmd_ls(int argc, char **argv);
 int cmd_cd(int argc, char **argv);
 int cmd_tree(int argc, char **argv);

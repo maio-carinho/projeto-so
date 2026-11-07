@@ -1,221 +1,123 @@
 # projeto-so
 
-Repositório para o desenvolvimento da 2ª VA de Sistemas Operacionais (Turma de BCC).
+Repositório para o desenvolvimento da 2ª VA de Sistemas Operacionais (BCC).
 
-O projeto é um **simulador de sistema operacional em C**, construído em cinco etapas. Cada etapa acrescentará um módulo e se integra às anteriores.
+Simulador de sistema operacional em C, feito em cinco etapas que se integram. É um programa de linha de comando: tudo acontece na memória RAM e, ao sair com `exit`, o estado é perdido.
 
----
+> **Manutenção:** a cada etapa, atualize a tabela abaixo, acrescente um capítulo curto antes das limitações e ajuste a estrutura do Capítulo 3.
 
-## Sumário
-
-1. [Visão geral e andamento](#1-visão-geral-e-andamento)
-2. [Como compilar e executar](#2-como-compilar-e-executar)
-3. [Estrutura do projeto e convenções](#3-estrutura-do-projeto-e-convenções)
-4. [Etapa 1: Sistema de Arquivos](#4-etapa-1-sistema-de-arquivos)
-5. [Limitações conhecidas](#5-limitações-conhecidas)
-
----
-
-## 1. Visão geral e andamento
-
-O simulador é um programa de linha de comando: o usuário digita comandos e o programa mostra o que o "SO" faria. Nada é gravado de verdade no computador, pois tudo acontece na memória RAM enquanto o programa roda. Ao sair com `exit`, o estado é perdido.
+## 1. Andamento
 
 | Etapa | Tema | Entrega | Status |
 |---|---|---|---|
-| 1 | Sistema de Arquivos (FS) | 1 nov | Concluída |
-| 2 | Entrada/Saída (escalonamento de disco, RAID) | 8 nov | Pendente |
+| 1 | Sistema de Arquivos | 1 nov | Concluída |
+| 2 | Entrada/Saída (escalonamento de disco, RAID, SSD) | 8 nov | Concluída |
 | 3 | Segurança e Proteção | 15 nov | Pendente |
 | 4 | Gerenciamento de Memória | 22 nov | Pendente |
 | 5 | Processos e Concorrência | 29 nov | Pendente |
 
----
+## 2. Compilar e executar
 
-## 2. Como compilar e executar
-
-**Requisitos:** um compilador C (`gcc`) e o `make`. Este projeto foi desenvolvido no Windows com o MinGW (gcc 6.3.0), mas compila também em Linux e no WSL.
-
-### Windows (PowerShell, com MinGW)
+Requer `gcc` e `make` (desenvolvido no Windows com MinGW 6.3.0). No PowerShell:
 
 ```powershell
-mingw32-make               # compila e gera fs_simulator.exe
-chcp 65001                 # terminal em UTF-8 (acentos e caracteres da árvore)
-.\fs_simulator.exe         # executa
+mingw32-make
+chcp 65001            # UTF-8, para os acentos e a árvore aparecerem certos
+.\fs_simulator.exe    # digite help para ver os comandos e exit para sair
 ```
 
----
+Em Linux/WSL, use `make` e `./fs_simulator`.
 
-## 3. Estrutura do projeto e convenções
-
-```
-projeto-so/
-├── Makefile
-├── README.md
-├── .gitignore
-└── src/
-    ├── main.c          # laço do shell e tabela de comandos
-    ├── utils.h / .c    # constantes e registro de erros, usados por todos os módulos
-    ├── disco.h / .c    # camada física: disco dividido em blocos
-    └── fs.h / .c       # Etapa 1: árvore de diretórios, CRUD, alocação indexada
-```
-
-### Como os módulos se relacionam
-
-Cada camada só chama a de baixo:
+## 3. Estrutura e convenções
 
 ```
-shell (main.c)  ──►  fs (árvore, i-nodes)  ──►  disco (blocos)
-                          └───────────────┬──────────┘
-                                   utils (constantes e erros)
+src/
+├── main.c          # shell: lê o comando e chama a função certa
+├── utils.h / .c    # constantes e registro de erros
+├── disco.h / .c    # blocos lógicos (livre/ocupado) sobre o meio escolhido
+├── fs.h / .c       # Etapa 1: árvore, CRUD, alocação indexada
+├── raid.h / .c     # Etapa 2: discos físicos, paridade, falhas
+├── escalonador.h / .c  # Etapa 2: fila e algoritmos do braço do disco
+├── ssd.h / .c      # Etapa 2: páginas flash, coleta de lixo, desgaste
+└── es.h / .c       # Etapa 2: comandos io, raid, ssd e meio
 ```
 
-Um **módulo** é um par de arquivos: o `.h` (header) declara *o que* o módulo oferece, e o `.c` contém *como* ele faz. Para acrescentar comandos de uma etapa nova, inclua o `.h` do módulo em `main.c` e adicione uma linha na tabela `comandos`.
+Cada camada chama só a de baixo: `main → fs → disco → (raid → escalonador | ssd)`; o `main` também chama o `es`.
 
-### O que cada módulo oferece
-
-| Módulo | Funções públicas | Papel |
-|---|---|---|
-| `utils` | `reg_erro`, `reg_ultimo_erro` e as constantes `TAM_BLOCO`, `TOTAL_BLOCOS`, `TAM_NOME`, `TAM_PATH` | registrar e consultar a última mensagem de erro; valores compartilhados |
-| `disco` | `disco_init`, `disco_alocar_bloco`, `disco_liberar_bloco`, `disco_livre`, `livres`, `disco_ler_bloco`, `disco_gravar_bloco` | reservar, liberar, ler e gravar blocos. Não sabe o que é arquivo |
-| `fs` | `fs_init`, `fs_shutdown`, `fs_cwd_path` e os comandos `cmd_mkdir`, `cmd_create`, `cmd_ls`, `cmd_cd`, `cmd_tree`, `cmd_read`, `cmd_update`, `cmd_rm`, `cmd_fs_status` | árvore de diretórios e arquivos; dá significado aos blocos |
-
-### Convenções de código
-
-- **Retorno das funções:** as que podem falhar devolvem `0` em caso de sucesso e `-1` em caso de erro. A mensagem fica disponível em `reg_ultimo_erro()`.
-- **Assinatura dos comandos:** todos recebem `(int argc, char **argv)`, ou seja, os argumentos digitados sem o nome do comando.
-- **Prefixos:** `disco_` para o módulo de disco, `fs_` para a interface pública do sistema de arquivos, `cmd_` para comandos do usuário e `reg_` para o registro de erros.
-- **Nomes em português**, sem acentos nos identificadores. Os textos exibidos ao usuário podem ter acentos.
-- **Textos dos comandos digitados** (`mkdir`, `create`, `fs_status`...) seguem os exemplos do enunciado.
-
----
+- Funções que podem falhar devolvem `0` (ok) ou `-1`, com a mensagem em `reg_ultimo_erro()`.
+- Todo comando recebe `(int argc, char **argv)`; novos comandos entram como uma linha na tabela `comandos` do `main.c`.
+- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
 
 ## 4. Etapa 1: Sistema de Arquivos
 
-### 4.1 O que foi implementado
-
-- **Hierarquia em árvore** de diretórios e arquivos, com caminhos absolutos (`/sistema/logs/app.log`) e relativos (`logs/app.log`, `..`, `.`).
-- **CRUD:** criar, ler, atualizar e deletar diretórios e arquivos.
-- **Disco simulado** com 16 blocos de 4 KB (64 KB no total).
-- **Alocação indexada (i-node)** como estratégia de alocação física.
-- **Diagnóstico do disco:** mapa de ocupação, fragmentação interna, fragmentação externa e indicação de necessidade de compactação.
-
-### 4.2 Comandos
+Árvore de diretórios e arquivos com caminhos absolutos e relativos, CRUD e um disco de **16 blocos de 4 KB**, com **alocação indexada**: cada arquivo usa 1 bloco de i-node (a lista de onde estão os dados) mais N blocos de dados, que podem ficar espalhados. O bloco 0 é do i-node da raiz, então sobram 15 para arquivos.
 
 | Comando | Função |
 |---|---|
-| `mkdir <caminho>` | cria um diretório |
-| `create <caminho> --size <tam>` | cria um arquivo (tamanhos: `512B`, `10KB`, `1MB`; maiúsculas ou minúsculas) |
-| `ls [caminho]` | lista o conteúdo de um diretório |
-| `cd [caminho]` | muda o diretório atual (sem argumento, vai para `/`) |
-| `tree` | mostra a árvore completa |
-| `read <arquivo>` | lê o i-node do disco e mostra o começo do conteúdo |
-| `update <arquivo> --size <tam>` | muda o tamanho do arquivo (libera e realoca os blocos) |
-| `rm <caminho> [-r]` | remove arquivo ou diretório (`-r` para diretório com conteúdo) |
-| `fs_status` | mapa do disco e relatório de fragmentação |
-| `help` / `exit` (ou `quit`) | ajuda / sair |
+| `mkdir <caminho>` / `cd [caminho]` / `ls [caminho]` / `tree` | navegar e listar |
+| `create <caminho> --size <tam>` | cria arquivo (`512B`, `10KB`, `1MB`) |
+| `read <arquivo>` | lê o i-node do disco e o começo do conteúdo |
+| `update <arquivo> --size <tam>` | muda o tamanho (não altera nada se não couber) |
+| `rm <caminho> [-r]` | remove arquivo ou diretório |
+| `fs_status` | mapa do disco e fragmentação |
 
-O comando `fs_status` aceita o argumento `--details` (como no enunciado), mas o relatório detalhado é sempre exibido.
-
-### 4.3 Como funciona a alocação indexada
-
-Cada arquivo usa **1 bloco de i-node + N blocos de dados**. O i-node é uma "tabela de índices": ele guarda a lista de quais blocos contêm os dados do arquivo. Por isso os blocos de dados **não precisam ser vizinhos** e podem ficar espalhados pelo disco.
-
-Exemplo: um arquivo de 10 KB, com blocos de 4 KB, precisa de 3 blocos de dados (4 KB + 4 KB + 2 KB) mais 1 bloco de i-node.
+O `fs_status` mostra o mapa de blocos e o diagnóstico (`R` = raiz, minúscula = i-node, maiúscula = dados, `·` = livre):
 
 ```
-Bloco 01 [i-node]  ──►  lista: [2, 3, 4]
-Bloco 02 [dado 1]   4096 bytes
-Bloco 03 [dado 2]   4096 bytes
-Bloco 04 [dado 3]   2048 bytes (o restante do bloco fica desperdiçado)
-```
-
-O bloco 0 é sempre reservado ao i-node do diretório raiz. Diretórios comuns não ocupam blocos no disco, apenas existem na árvore em memória. Um arquivo de tamanho 0 ocupa só o bloco do i-node. Como o bloco 0 pertence à raiz, sobram **15 blocos** para os arquivos.
-
-O conteúdo dos arquivos é **simulado**: o `create` grava letras `a` a `z` repetidas, só para que os blocos contenham bytes reais. Isso prepara as etapas seguintes (paridade do RAID, criptografia e verificação de integridade, que precisam do conteúdo dos blocos).
-
-### 4.4 Diagnóstico do disco
-
-- **Fragmentação interna:** espaço desperdiçado *dentro* do último bloco de um arquivo. No exemplo acima, o arquivo de 10 KB ocupa 12 KB e desperdiça 2 KB.
-- **Fragmentação externa:** blocos livres espalhados e pequenos demais para abrigar um arquivo contíguo. **Na alocação indexada ela é sempre 0**, porque qualquer bloco livre serve. O relatório mostra os trechos livres apenas para visualização.
-- **Compactação:** reorganizar o disco para juntar o espaço livre. Na alocação indexada ela nunca é necessária, e o relatório sempre indica `NÃO`.
-
-### 4.5 Exemplo de uso
-
-```
-/ > mkdir /sistema
-/ > mkdir /sistema/logs
-/ > create /sistema/logs/app.log --size 10KB
-/ > tree
-[ÁRVORE DO SISTEMA DE ARQUIVOS]
-/
-└── sistema/ [DIR]
-    └── logs/ [DIR]
-        └── app.log (10 KB) [ARQ]
-/ > fs_status
-Tamanho do Bloco de Disco: 4 KB | Total de Blocos: 16 (64 KB) | Alocação: Indexada
-
-[MAPA VISUAL]  [R] [a] [A] [A] [A] [·] [·] [·] [·] [·] [·] [·] [·] [·] [·] [·]
-   A = /sistema/logs/app.log
-
-[MAPA DE ALOCAÇÃO DO DISCO]
-Bloco 00     : [INODE_RAIZ] : Diretório '/'
-Bloco 01     : [INODE] : Arquivo '/sistema/logs/app.log'
-Bloco 02     : [DADO]  : '/sistema/logs/app.log' (Bloco 1 - 4096 bytes ocupados)
-Bloco 03     : [DADO]  : '/sistema/logs/app.log' (Bloco 2 - 4096 bytes ocupados)
-Bloco 04     : [DADO]  : '/sistema/logs/app.log' (Bloco 3 - 2048 bytes ocupados)
-Bloco 05..15 : [LIVRE]
-
---- RELATÓRIO DE FRAGMENTAÇÃO ---
-'/sistema/logs/app.log': real 10240 B | alocado 12288 B (3 bloco(s) de dados) | frag. interna 2048 B (17%)
-Fragmentação Interna (total) : 2048 bytes
-Fragmentação Externa         : 0 bytes (1 trecho(s) livre(s): [(5, 11)])
+[MAPA VISUAL]  [R] [a] [A] [A] [A] [·] [·] ...      (create /sistema/logs/app.log --size 10KB)
+Fragmentação Interna (total) : 2048 bytes             (10 KB ocupam 3 blocos de 4 KB)
+Fragmentação Externa         : 0 bytes
 Necessidade de Compactação   : NÃO
 ```
 
-No **mapa visual**: `R` é o i-node da raiz, letra minúscula é o i-node de um arquivo, letra maiúscula são os blocos de dados desse arquivo e `·` é bloco livre.
+Na alocação indexada qualquer bloco livre serve, então a fragmentação externa é sempre 0 e a compactação nunca é necessária.
 
-Para ver o i-node sendo lido do disco:
+## 5. Etapa 2: Entrada/Saída
 
-```
-/ > read /sistema/logs/app.log
-Arquivo: /sistema/logs/app.log | 10240 bytes
-  i-node (lido do bloco 01): [2, 3, 4]
-  conteúdo (início): "abcdefghijklmnop"
-```
+A E/S entra **por baixo do `disco`**: cada leitura ou gravação de bloco do FS vira requisições nos discos físicos (ou operações de página no SSD), e o `fs.c` não precisou mudar, só ganhou o `write_file`. O disco lógico continua com 16 blocos, e trocar o RAID ou o meio migra os dados já gravados.
 
-Para ver a vantagem da alocação indexada (blocos espalhados), crie `/a` e `/b` com 8 KB cada, apague o `/a` e crie `/c` com 20 KB: o `read /c` mostra `[2, 3, 7, 8, 9]`, pois o arquivo ocupa os buracos deixados pelo `/a` e continua depois do `/b`, sem qualquer fragmentação externa.
+| Comando | Função |
+|---|---|
+| `write_file <caminho> "<texto>"` ou `--size <tam>` | grava texto (ou conteúdo simulado), criando ou sobrescrevendo |
+| `io auto <on\|off>` | mostra o escalonamento depois de cada comando do FS (começa desligado) |
+| `io algoritmo <fcfs\|sstf\|scan\|cscan> [sobe\|desce]` | escolhe o algoritmo (padrão: SSTF) |
+| `io add <trilha...>`, `io cabeca <trilha>` | enfileira requisições manuais e posiciona a cabeça (`--disco N` escolhe o disco) |
+| `io fila`, `io escalonar [alg]`, `io comparar`, `io status` | ver a fila, atendê-la, comparar os algoritmos, estatísticas |
+| `raid <nenhum\|0\|1\|4\|5>`, `raid status` | escolhe o arranjo e mostra discos e mapa físico |
+| `raid falhar\|reconstruir\|testar <disco>` | simula falha, reconstrói e roda o teste completo de recuperação |
+| `meio <hdd\|ssd>` | escolhe o dispositivo de armazenamento |
+| `ssd status`, `ssd wear <on\|off>`, `ssd estresse <n>` | desgaste, nivelamento de desgaste e teste de regravação |
 
-### 4.6 Decisões de projeto
+**Escalonamento.** Com a fila `98, 183, 37, 122, 14` e a cabeça na trilha 53 (Exemplo 2.1; trilhas de 0 a 199):
 
-- **Disco separado do FS** (`disco.c`): o disco só sabe reservar, liberar, ler e gravar blocos. Quem dá significado a eles (arquivo, i-node) é o `fs.c`. Na Etapa 2, o escalonador de disco e o RAID entram por trás da interface do disco, sem alterar o FS.
-- **`update` seguro:** antes de liberar os blocos antigos, o comando confere se o novo tamanho cabe. Se não couber, nada é alterado.
-- **Quem é dono de cada bloco** é descoberto pelo FS, percorrendo a árvore na hora de montar o `fs_status`. O disco guarda apenas se o bloco está livre ou ocupado.
-- **`rm` de um diretório** só funciona com `-r` se ele não estiver vazio, e, se o usuário estiver dentro dele, o diretório atual volta para o pai.
-
-### 4.7 Roteiro de testes manuais
-
-Cada linha abaixo é um cenário. Reinicie o programa entre os cenários, pois o disco tem só 16 blocos.
-
-| Cenário | Comandos | Resultado esperado |
+| Algoritmo | Como decide | Deslocamento |
 |---|---|---|
-| Exemplos do enunciado | `mkdir`, `create ... --size 10KB`, `tree`, `fs_status` | mapa `[R] [a] [A] [A] [A]`, frag. interna 2048 B, externa 0, compactação NÃO |
-| Caminhos relativos | `cd`, `mkdir b`, `create b/f.txt`, `cd ..`, `cd ../a/b` | o prompt acompanha o diretório; `read f.txt` mostra `[2]` |
-| Atualizar | `update` para maior, menor e maior que o disco | o último falha com `Disco cheio` e **não altera** o arquivo |
-| Blocos espalhados | criar `/a`, `/b`, apagar `/a`, criar `/c` de 20 KB | `read /c` mostra `[2, 3, 7, 8, 9]` |
-| Disco cheio exato | `create /grande --size 56KB` (14 blocos + i-node) | cabe; qualquer arquivo a mais dá `Disco cheio` |
-| Tamanhos extremos | `--size 0` e `--size 1B` | tamanho 0 usa só o i-node; 1 B desperdiça 4095 B (100%) |
-| Remover recursivo | `rm /p -r` estando dentro de `/p/q` | prompt volta para `/`; todos os blocos são liberados |
-| Erros | nome repetido, tamanho inválido, caminho inexistente, `cd` em arquivo, `rm /` | uma mensagem clara de erro para cada caso |
+| FCFS | ordem de chegada | 469 |
+| SSTF | trilha mais próxima | 208 (`53 -> 37 -> 14 -> 98 -> 122 -> 183`) |
+| SCAN | varre até a extremidade e inverte | 331 |
+| C-SCAN | varre até a extremidade e salta para a outra, sem atender | 382 |
 
----
+SCAN e C-SCAN vão até a extremidade do disco, e o salto do C-SCAN conta como deslocamento.
 
-## 5. Limitações conhecidas
+**RAID.** A paridade é o XOR dos blocos de dados da faixa: se um disco falha, o bloco perdido é recalculado com o XOR dos que sobraram.
 
-**Etapa 1**
+| Nível | Discos | Organização | Tolera falha |
+|---|---|---|---|
+| Sem RAID | 1 | disco único (padrão) | não |
+| RAID 0 | 2 | blocos alternados entre os discos | não |
+| RAID 1 | 2 | espelhamento | 1 disco |
+| RAID 4 | 3 | paridade sempre no Disco 3 | 1 disco |
+| RAID 5 | 3 | paridade que gira entre os discos | 1 disco |
 
-- Tudo vive na memória RAM: ao sair do simulador (`exit`), nada é salvo.
-- O disco tem só 16 blocos, então cabem no máximo 15 arquivos (cada um usa pelo menos o bloco do i-node).
-- Nomes têm até 63 caracteres, e cada comando aceita até 8 palavras.
-- Os comandos não aceitam aspas, então nomes com espaço não são suportados.
-- O conteúdo dos arquivos é gerado automaticamente; ainda não é possível gravar texto escolhido pelo usuário.
-- No Windows, o terminal precisa estar em UTF-8 (`chcp 65001`) para exibir os acentos e a árvore corretamente. Ao redirecionar a saída no PowerShell, defina também `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`.
-- O alvo `make clean` usa `rm`, que não existe no PowerShell puro.
+No RAID 4/5, cada bloco gravado gera 4 requisições (lê dado e paridade antigos, grava dado e paridade novos): a penalidade de escrita. Com um disco falho, leituras e gravações continuam em modo degradado. O `raid testar 2` falha o disco, lê tudo por reconstrução e confere: `Recuperando Bloco 01 via operação XOR: (Disco 1 XOR Disco 3) -> Reconstrução [OK]`.
+
+**SSD.** Não tem cabeça nem trilhas: guarda dados em páginas, uma regravação vai para outra página (a antiga fica inválida) e só se apaga um bloco inteiro de cada vez. O simulador tem tabela de tradução, coleta de lixo e TRIM (`rm` libera a página). O **nivelamento de desgaste** espalha os apagamentos: em um simulador novo com `/a` (12 KB) e `/b` (8 KB), `ssd estresse 400` dá diferença de apagamentos entre blocos de 24 sem o nivelamento e 1 com ele, ao custo de mais cópias de página (amplificação de escrita de 1,12). Com outros arquivos no disco os valores mudam.
+
+**Quando há E/S:** `create`, `update`, `write_file` (grava i-node e dados) e `read` (lê i-node e primeiro bloco). `ls`, `tree`, `cd` e `mkdir` não geram E/S, e `rm` só marca blocos livres.
+
+## 6. Limitações
+
+- **Etapa 1:** tudo na RAM; 16 blocos (no máximo 15 arquivos); nomes de até 63 caracteres; o `read` mostra só 16 bytes do conteúdo.
+- **Etapa 2:** só o deslocamento da cabeça é simulado (sem tempo de rotação), com 200 trilhas distribuídas igualmente pelos blocos; fila de 128 requisições por disco (se encher, é atendida em silêncio); um disco falho por vez, e RAID 0 ou "sem RAID" perdem os dados (reinicie o simulador); SSD em modelo reduzido (8 blocos de apagamento de 4 páginas), sem limite de apagamentos; sem relógio simulado.
+- **Comandos:** até 16 palavras; aspas duplas agrupam palavras, sem escape de aspa.
+- **Windows:** o terminal precisa de UTF-8 (`chcp 65001`; no PowerShell, redirecionando a saída, use também `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`), e o `make clean` usa `rm`, que não existe no PowerShell puro.
