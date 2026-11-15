@@ -1,7 +1,7 @@
 #ifndef ESCALONADOR_H
 #define ESCALONADOR_H
 
-#include "utils.h"
+#include "comum/utils.h"
 
 #define NUM_TRILHAS     200     
 #define MAX_DISCOS      3       

@@ -1,8 +1,9 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c99 -g
+CFLAGS  = -Wall -Wextra -std=c99 -g -Isrc
 TARGET  = fs_simulator
-SRC     = src/main.c src/utils.c src/fs.c src/disco.c src/raid.c src/escalonador.c src/ssd.c src/es.c
+SRC     = $(wildcard src/*.c src/*/*.c)
 OBJ     = $(SRC:.c=.o)
+HEADERS = $(wildcard src/*/*.h)
 
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ)
@@ -10,7 +11,7 @@ $(TARGET): $(OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJ): src/utils.h src/disco.h src/fs.h src/raid.h src/escalonador.h src/ssd.h src/es.h
+$(OBJ): $(HEADERS)
 
 clean:
 	rm -f $(OBJ) $(TARGET)

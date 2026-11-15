@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdarg.h>
-#include "utils.h"
+#include "comum/utils.h"
 
 static char mensagem_erro[256];
 

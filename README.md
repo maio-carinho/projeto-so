@@ -12,7 +12,7 @@ Simulador de sistema operacional em C, feito em cinco etapas que se integram. É
 |---|---|---|---|
 | 1 | Sistema de Arquivos | 1 nov | Concluída |
 | 2 | Entrada/Saída (escalonamento de disco, RAID, SSD) | 8 nov | Concluída |
-| 3 | Segurança e Proteção | 15 nov | Pendente |
+| 3 | Segurança e Proteção (usuários, ACL, criptografia, antivírus) | 15 nov | Em andamento |
 | 4 | Gerenciamento de Memória | 22 nov | Pendente |
 | 5 | Processos e Concorrência | 29 nov | Pendente |
 
@@ -32,21 +32,22 @@ Em Linux/WSL, use `make` e `./fs_simulator`.
 
 ```
 src/
-├── main.c          # shell: lê o comando e chama a função certa
-├── utils.h / .c    # constantes e registro de erros
-├── disco.h / .c    # blocos lógicos (livre/ocupado) sobre o meio escolhido
-├── fs.h / .c       # Etapa 1: árvore, CRUD, alocação indexada
-├── raid.h / .c     # Etapa 2: discos físicos, paridade, falhas
-├── escalonador.h / .c  # Etapa 2: fila e algoritmos do braço do disco
-├── ssd.h / .c      # Etapa 2: páginas flash, coleta de lixo, desgaste
-└── es.h / .c       # Etapa 2: comandos io, raid, ssd e meio
+├── main.c                 # shell: lê o comando e chama a função certa
+├── comum/                 # utils: constantes e registro de erros
+├── criptografia/          # sha256, cripto: hash e cifra (não dependem de nada)
+├── armazenamento/         # disco (blocos lógicos), raid, ssd, escalonador (braço do disco)
+│                          # e es (comandos io, raid, ssd e meio)          [Etapas 1 e 2]
+├── sistema_arquivos/      # fs: árvore, CRUD, permissões e criptografia de arquivos
+├── seguranca/             # seguranca: usuários, grupos, sessão, ACL e auditoria
+└── antivirus/             # antivirus: integridade dos blocos e assinaturas
 ```
 
-Cada camada chama só a de baixo: `main → fs → disco → (raid → escalonador | ssd)`; o `main` também chama o `es`.
+Uma pasta só usa as pastas de baixo: `comum` e `criptografia` não dependem de nada; `armazenamento` e `seguranca` usam `comum` e `criptografia`; `sistema_arquivos` usa essas três; `antivirus` usa `sistema_arquivos`, `armazenamento` e `seguranca`; o `main` usa tudo. O `fs` se registra no `seguranca` para criar o `/home/<usuário>`, sem que o `seguranca` precise conhecer o sistema de arquivos. Novas etapas ganham pasta própria (`memoria/`, `processos/`).
 
-- Funções que podem falhar devolvem `0` (ok) ou `-1`, com a mensagem em `reg_ultimo_erro()`.
+- Funções que podem falhar devolvem `0` (ok) ou `-1`, com a mensagem em `reg_ultimo_erro()`; `ERRO_JA_EXIBIDO` indica que o comando já mostrou na tela o motivo da recusa.
 - Todo comando recebe `(int argc, char **argv)`; novos comandos entram como uma linha na tabela `comandos` do `main.c`.
-- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
+- Os `#include` levam o caminho da pasta (`#include "armazenamento/disco.h"`). Nomes de pasta não podem ter espaços, por causa do `make`. O Makefile compila `src/*.c` e `src/*/*.c` sozinho, então criar um módulo ou uma pasta não exige mexer nele.
+- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `seguranca_`, `cripto_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
 
 ## 4. Etapa 1: Sistema de Arquivos
 
@@ -115,9 +116,53 @@ No RAID 4/5, cada bloco gravado gera 4 requisições (lê dado e paridade antigo
 
 **Quando há E/S:** `create`, `update`, `write_file` (grava i-node e dados) e `read` (lê i-node e primeiro bloco). `ls`, `tree`, `cd` e `mkdir` não geram E/S, e `rm` só marca blocos livres.
 
-## 6. Limitações
+## 6. Etapa 3: Segurança e Proteção
+
+O simulador **inicia como `root` em MODO_KERNEL** (senha inicial `root`), para as etapas anteriores continuarem funcionando; `login` troca de usuário. Operações críticas exigem MODO_KERNEL, o acesso a arquivos depende de permissões, o conteúdo pode ser cifrado antes de ir para o bloco e cada bloco tem um hash de integridade.
+
+| Comando | Função |
+|---|---|
+| `login --user <nome>`, `logout`, `whoami` | sessão (a senha é pedida sem eco, com `*`) |
+| `sudo <comando>` | executa um comando como root (só o grupo `admin`; pede a senha do usuário) |
+| `useradd <nome> --group <grupo>`, `groupadd`, `usermod <usuário> --add-group <grupo>`, `passwd [usuário]`, `users` | contas e grupos |
+| `chmod <octal> <caminho>`, `chown <usuário>[:<grupo>] <caminho>`, `stat <caminho>` | permissões e propriedade |
+| `read_file <caminho> [--key "<chave>"]`, `encrypt_file`, `decrypt_file` (`--key "<chave>"`) | conteúdo e criptografia |
+| `antivirus_scan [caminho]`, `antivirus_sig [add <texto>]`, `adulterar_bloco <arquivo> [--bloco N]`, `audit_log [n]` | integridade e auditoria |
+
+**Modos.** São críticos (só em MODO_KERNEL): `fs_status`, `io`, `raid`, `ssd`, `meio`, `useradd`, `groupadd`, `usermod`, `users`, `chown`, `audit_log`, `antivirus_*` e `adulterar_bloco`. Fora do modo kernel, a tentativa é recusada, mostrada na tela e registrada no log. O prompt de quem não é root mostra o usuário (`carlos:/ >`), e `logout` deixa a sessão vazia até um novo `login`.
+
+**Contas.** As senhas são guardadas como SHA-256 com sal (2000 rodadas), nunca em texto. Cada usuário tem um grupo principal e até 4 extras, e ganha o diretório `/home/<nome>`.
+
+**Permissões (ACL).** Cada arquivo e diretório tem proprietário, grupo e permissões `rwx` para dono, grupo e outros (como `rwxr-x---`, `750`); o root ignora a verificação. Ler um arquivo exige `r`, gravar exige `w`, criar ou remover entradas exige `w` no diretório pai, `ls` exige `r` e `cd` exige `x`. Arquivos novos nascem com `644` (diretórios, `755`).
+
+```
+carlos:/ > read_file /sistema/config.sys
+[SISTEMA DE SEGURANÇA - VERIFICAÇÃO DE ACL]
+Objeto : /sistema/config.sys
+Proprietário: root (Grupo: admin)
+Permissões : rwxr-x--- (750)
+Ação Pedida : LEITURA por 'carlos' (Grupo: devs)
+
+[NEGADO]: O usuário 'carlos' não possui permissão de leitura no objeto '/sistema/config.sys'.
+Tentativa não autorizada registrada nos logs do sistema.
+```
+
+**Criptografia.** `encrypt_file` cifra o arquivo com uma cifra de fluxo (SHA-256 em modo contador) e uma chave derivada da senha digitada e de um sal próprio do arquivo; só o texto cifrado vai para os blocos, e o simulador guarda apenas um verificador da chave. `read_file --key` decifra só na memória, e `write_file` e `update` ficam bloqueados enquanto o arquivo estiver cifrado.
+
+**Integridade.** Toda gravação de bloco guarda o hash SHA-256 dele (o "registro oficial"). O `antivirus_scan` confere esses hashes (i-node e dados) e procura assinaturas maliciosas, que são textos inventados como `VIRUS_TESTE_SIMULADO`, nos arquivos não cifrados. O `adulterar_bloco` simula uma alteração direta no disco, sem passar pelo sistema de arquivos:
+
+```
+- /home/carlos/segredo.txt : [OK - Criptografado e Íntegro]
+- /sistema/logs/app.log : [ALERTA] Hash do bloco difere do registro oficial! (bloco 02)
+Resultado: Possível modificação direta não autorizada no bloco do disco.
+```
+
+O `audit_log` mostra o registro de auditoria: negações de acesso, logins (inclusive os que falham), `chmod`, `chown`, criptografia e varreduras.
+
+## 7. Limitações
 
 - **Etapa 1:** tudo na RAM; 16 blocos (no máximo 15 arquivos); nomes de até 63 caracteres; o `read` mostra só 16 bytes do conteúdo.
 - **Etapa 2:** só o deslocamento da cabeça é simulado (sem tempo de rotação), com 200 trilhas distribuídas igualmente pelos blocos; fila de 128 requisições por disco (se encher, é atendida em silêncio); um disco falho por vez, e RAID 0 ou "sem RAID" perdem os dados (reinicie o simulador); SSD em modelo reduzido (8 blocos de apagamento de 4 páginas), sem limite de apagamentos; sem relógio simulado.
+- **Etapa 3:** as permissões são conferidas no arquivo ou diretório pedido, não em cada diretório do caminho; até 8 usuários, 8 grupos e 4 grupos extras por usuário; o SHA-256 e a cifra são didáticos (não servem para uso real); o registro de auditoria guarda os últimos 64 eventos, só na memória e sem horário; a leitura de senha sem eco foi escrita para Windows (`_getch`) e Linux, e com a entrada redirecionada a senha vem da linha seguinte.
 - **Comandos:** até 16 palavras; aspas duplas agrupam palavras, sem escape de aspa.
 - **Windows:** o terminal precisa de UTF-8 (`chcp 65001`; no PowerShell, redirecionando a saída, use também `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`), e o `make clean` usa `rm`, que não existe no PowerShell puro.

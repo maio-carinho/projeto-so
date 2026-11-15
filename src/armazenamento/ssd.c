@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include "ssd.h"
+#include "armazenamento/ssd.h"
 
 typedef enum { PAGINA_LIVRE, PAGINA_VALIDA, PAGINA_INVALIDA } EstadoPagina;
 

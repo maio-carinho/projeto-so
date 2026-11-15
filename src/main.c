@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "utils.h"
-#include "fs.h"
-#include "es.h"
+#include "comum/utils.h"
+#include "sistema_arquivos/fs.h"
+#include "armazenamento/es.h"
+#include "seguranca/seguranca.h"
+#include "antivirus/antivirus.h"
 
 #define TAM_LINHA 512    
 #define MAX_ARGS 16     
@@ -40,20 +42,48 @@ static int cmd_help(int argc, char **argv) {
            "  ssd status                        desgaste dos blocos do SSD\n"
            "  ssd wear <on|off>                 liga/desliga o nivelamento de desgaste\n"
            "  ssd estresse <n>                  regrava n vezes um bloco quente\n"
-           "\n"
+           "\nSegurança e proteção:\n"
+           "  login --user <nome>               abre uma sessão (pede a senha)\n"
+           "  logout                            encerra a sessão\n"
+           "  whoami                            mostra o usuário, o grupo e o modo\n"
+           "  sudo <comando>                    executa como root (só para o grupo admin)\n"
+           "  useradd <nome> --group <grupo>    cria um usuário (kernel)\n"
+           "  groupadd <nome>                   cria um grupo (kernel)\n"
+           "  usermod <usuário> --add-group <g> coloca o usuário em outro grupo (kernel)\n"
+           "  passwd [usuário]                  troca a senha\n"
+           "  users                             lista usuários e grupos (kernel)\n"
+           "  chmod <octal> <caminho>           altera as permissões rwx (ex.: 750)\n"
+           "  chown <usuário>[:<grupo>] <cam.>  altera o proprietário (kernel)\n"
+           "  stat <caminho>                    dono, permissões e criptografia\n"
+           "  read_file <caminho> [--key \"<chave>\"]   mostra o conteúdo (decifra com a chave)\n"
+           "  encrypt_file <caminho> --key \"<chave>\"  criptografa o arquivo nos blocos\n"
+           "  decrypt_file <caminho> --key \"<chave>\"  descriptografa o arquivo\n"
+           "  antivirus_scan [caminho]          varre integridade e assinaturas (kernel)\n"
+           "  antivirus_sig [add <texto>]       lista ou adiciona assinaturas (kernel)\n"
+           "  adulterar_bloco <arq> [--bloco N] simula alteração direta no disco (kernel)\n"
+           "  audit_log [n]                     registro de auditoria (kernel)\n"
+           "\n(kernel) = exige MODO_KERNEL (root ou sudo); fs_status, io, raid, ssd e meio também.\n"
            "  exit                              sai\n");
     return 0;
 }
 
-typedef struct { const char *name; int (*fn)(int, char **); } Command;
+typedef struct { const char *name; int (*fn)(int, char **); int critico; } Command;
 
 static const Command comandos[] = {
-    { "mkdir", cmd_mkdir }, { "create", cmd_create }, { "ls", cmd_ls },
-    { "cd", cmd_cd }, { "tree", cmd_tree }, { "read", cmd_read },
-    { "update", cmd_update }, { "rm", cmd_rm },
-    { "fs_status", cmd_fs_status }, { "help", cmd_help },
-    { "write_file", cmd_write_file },
-    { "io", cmd_io }, { "raid", cmd_raid }, { "ssd", cmd_ssd }, { "meio", cmd_meio },
+    { "mkdir", cmd_mkdir, 0 }, { "create", cmd_create, 0 }, { "ls", cmd_ls, 0 },
+    { "cd", cmd_cd, 0 }, { "tree", cmd_tree, 0 }, { "read", cmd_read, 0 },
+    { "update", cmd_update, 0 }, { "rm", cmd_rm, 0 },
+    { "fs_status", cmd_fs_status, 1 }, { "help", cmd_help, 0 },
+    { "write_file", cmd_write_file, 0 },
+    { "io", cmd_io, 1 }, { "raid", cmd_raid, 1 }, { "ssd", cmd_ssd, 1 }, { "meio", cmd_meio, 1 },
+    { "login", cmd_login, 0 }, { "logout", cmd_logout, 0 }, { "whoami", cmd_whoami, 0 },
+    { "useradd", cmd_useradd, 1 }, { "groupadd", cmd_groupadd, 1 }, { "usermod", cmd_usermod, 1 },
+    { "passwd", cmd_passwd, 0 }, { "users", cmd_users, 1 }, { "audit_log", cmd_audit_log, 1 },
+    { "chmod", cmd_chmod, 0 }, { "chown", cmd_chown, 1 }, { "stat", cmd_stat, 0 },
+    { "read_file", cmd_read_file, 0 }, { "encrypt_file", cmd_encrypt_file, 0 },
+    { "decrypt_file", cmd_decrypt_file, 0 },
+    { "antivirus_scan", cmd_antivirus_scan, 1 }, { "antivirus_sig", cmd_antivirus_sig, 1 },
+    { "adulterar_bloco", cmd_adulterar_bloco, 1 },
 };
 
 static int dividir_linha(char *linha, char **palavras, int maximo) {
@@ -75,7 +105,48 @@ static int dividir_linha(char *linha, char **palavras, int maximo) {
     return quantidade;
 }
 
+static const Command *buscar_comando(const char *nome) {
+    for (size_t i = 0; i < sizeof comandos / sizeof comandos[0]; i++)
+        if (strcmp(nome, comandos[i].name) == 0) return &comandos[i];
+    return NULL;
+}
+
+static void executar_comando(int argc, char **argv);
+
+static void executar_sudo(int argc, char **argv) {
+    if (argc < 2) { printf("Erro: Uso: sudo <comando> [argumentos]\n"); return; }
+    if (strcmp(argv[1], "sudo") == 0) { printf("Erro: o sudo não pode ser repetido.\n"); return; }
+    if (seguranca_elevar() != 0) { printf("Erro: %s\n", reg_ultimo_erro()); return; }
+    seguranca_registrar("SUDO: '%s' executado com privilégios de root", argv[1]);
+    executar_comando(argc - 1, argv + 1);
+    seguranca_baixar();
+}
+
+static void executar_comando(int argc, char **argv) {
+    if (strcmp(argv[0], "sudo") == 0) { executar_sudo(argc, argv); return; }
+
+    const Command *comando = buscar_comando(argv[0]);
+    if (!comando) {
+        printf("Comando desconhecido: %s (digite 'help')\n", argv[0]);
+        return;
+    }
+
+    int sem_login = strcmp(comando->name, "login") == 0 || strcmp(comando->name, "whoami") == 0 ||
+                    strcmp(comando->name, "help") == 0;
+    if (!seguranca_ha_sessao() && !sem_login) {
+        printf("Erro: Nenhuma sessão ativa. Use: login --user <nome>\n");
+        return;
+    }
+    if (comando->critico && seguranca_exigir_kernel(comando->name) != 0) return;
+
+    int resultado = comando->fn(argc - 1, argv + 1);
+    if (resultado != 0 && resultado != ERRO_JA_EXIBIDO)
+        printf("Erro: %s\n", reg_ultimo_erro());
+    es_fim_do_comando();
+}
+
 int main(void) {
+    seguranca_init();
     fs_init();
     es_iniciar();
 
@@ -83,29 +154,18 @@ int main(void) {
     for (;;) {
         char p[TAM_PATH];
         fs_cwd_path(p, sizeof p);
-        printf("%s > ", p);
+        printf("%s%s > ", seguranca_prefixo_prompt(), p);
         fflush(stdout);
-        if (!fgets(linha, sizeof linha, stdin)) break;     
+        if (!fgets(linha, sizeof linha, stdin)) break;
 
         char *argv[MAX_ARGS];
         int argc = dividir_linha(linha, argv, MAX_ARGS);
         if (argc == 0) continue;
 
         if (strcmp(argv[0], "exit") == 0 || strcmp(argv[0], "quit") == 0) break;
-
-        int flag = 0;
-        for (size_t i = 0; i < sizeof comandos / sizeof comandos[0]; i++) {
-            if (strcmp(argv[0], comandos[i].name) == 0) {
-                flag = 1;
-                if (comandos[i].fn(argc - 1, argv + 1) != 0)
-                    printf("Erro: %s\n", reg_ultimo_erro());
-                es_fim_do_comando();
-                break;
-            }
-        }
-        if (!flag) printf("Comando desconhecido: %s (digite 'help')\n", argv[0]);
+        executar_comando(argc, argv);
     }
 
-    fs_shutdown();                               
+    fs_shutdown();
     return 0;
 }

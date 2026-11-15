@@ -1,7 +1,7 @@
 #ifndef RAID_H
 #define RAID_H
 
-#include "utils.h"
+#include "comum/utils.h"
 
 typedef enum { RAID_NENHUM, RAID_0, RAID_1, RAID_4, RAID_5 } NivelRaid;
 

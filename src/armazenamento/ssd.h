@@ -1,7 +1,7 @@
 #ifndef SSD_H
 #define SSD_H
 
-#include "utils.h"
+#include "comum/utils.h"
 
 #define SSD_PAGINAS_POR_BLOCO 4
 #define SSD_BLOCOS            8

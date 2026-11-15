@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
-#include "raid.h"
-#include "escalonador.h"
+#include "armazenamento/raid.h"
+#include "armazenamento/escalonador.h"
 
 typedef struct {
     const char *nome;

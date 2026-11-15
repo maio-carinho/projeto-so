@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include "escalonador.h"
+#include "armazenamento/escalonador.h"
 
 typedef struct {
     Requisicao fila[MAX_REQUISICOES];

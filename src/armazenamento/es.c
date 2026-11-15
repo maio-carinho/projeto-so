@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "utils.h"
-#include "disco.h"
-#include "escalonador.h"
-#include "raid.h"
-#include "ssd.h"
-#include "es.h"
+#include "comum/utils.h"
+#include "armazenamento/disco.h"
+#include "armazenamento/escalonador.h"
+#include "armazenamento/raid.h"
+#include "armazenamento/ssd.h"
+#include "armazenamento/es.h"
 
 typedef enum { FIM_EXIBIR, FIM_PRESERVAR, FIM_SILENCIAR } TratamentoFim;
 

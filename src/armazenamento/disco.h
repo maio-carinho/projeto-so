@@ -1,8 +1,8 @@
 #ifndef DISCO_H
 #define DISCO_H
 
-#include "utils.h"
-#include "raid.h"
+#include "comum/utils.h"
+#include "armazenamento/raid.h"
 
 typedef enum { MEIO_HDD, MEIO_SSD } Meio;
 
@@ -25,5 +25,8 @@ int disco_definir_meio(Meio meio);
 int disco_definir_raid(NivelRaid nivel);
 void disco_imprimir_raid(void);
 int disco_testar_falha_raid(int disco);
+
+int disco_verificar_integridade(int bloco);
+int disco_adulterar_bloco(int bloco, int posicao);
 
 #endif

@@ -1,11 +1,15 @@
 #include <stdio.h>
 #include <string.h>
-#include "disco.h"
-#include "escalonador.h"
-#include "ssd.h"
+#include "armazenamento/disco.h"
+#include "armazenamento/escalonador.h"
+#include "armazenamento/ssd.h"
+#include "criptografia/sha256.h"
 
 static int ocupado[TOTAL_BLOCOS];
 static Meio meio = MEIO_HDD;
+
+static unsigned char hash_registrado[TOTAL_BLOCOS][TAM_HASH];
+static int tem_hash[TOTAL_BLOCOS];
 
 static int existe(int bloco) {
     return bloco >= 0 && bloco < TOTAL_BLOCOS;
@@ -13,6 +17,7 @@ static int existe(int bloco) {
 
 void disco_init(void) {
     memset(ocupado, 0, sizeof ocupado);
+    memset(tem_hash, 0, sizeof tem_hash);
     meio = MEIO_HDD;
     escalonador_init();
     raid_init();
@@ -32,6 +37,7 @@ int disco_alocar_bloco(void) {
 void disco_liberar_bloco(int bloco) {
     if (!existe(bloco)) return;
     ocupado[bloco] = 0;
+    tem_hash[bloco] = 0;
     if (meio == MEIO_SSD) ssd_descartar_pagina(bloco);
 }
 
@@ -63,7 +69,10 @@ int disco_gravar_bloco(int bloco, const unsigned char *buf) {
     if (!existe(bloco)) return reg_erro("Bloco inválido: %d", bloco);
     if (!ocupado[bloco])
         return reg_erro("Gravação em bloco não reservado: %d", bloco);
-    return gravar_meio(bloco, buf);
+    if (gravar_meio(bloco, buf) != 0) return -1;
+    sha256(buf, TAM_BLOCO, hash_registrado[bloco]);
+    tem_hash[bloco] = 1;
+    return 0;
 }
 
 static unsigned char copia_dos_dados[TOTAL_BLOCOS][TAM_BLOCO];
@@ -123,4 +132,26 @@ int disco_testar_falha_raid(int disco) {
     if (meio != MEIO_HDD)
         return reg_erro("O meio atual é SSD; RAID só vale para discos rígidos (use 'meio hdd').");
     return raid_testar_falha(disco, ocupado);
+}
+
+int disco_verificar_integridade(int bloco) {
+    if (!existe(bloco) || !tem_hash[bloco]) return -1;
+    unsigned char buf[TAM_BLOCO], hash[TAM_HASH];
+    if (ler_meio(bloco, buf) != 0) return -1;
+    sha256(buf, TAM_BLOCO, hash);
+    return memcmp(hash, hash_registrado[bloco], TAM_HASH) == 0;
+}
+
+int disco_adulterar_bloco(int bloco, int posicao) {
+    if (!existe(bloco)) return reg_erro("Bloco inválido: %d", bloco);
+    if (posicao < 0 || posicao >= TAM_BLOCO) return reg_erro("Posição inválida: %d", posicao);
+    unsigned char buf[TAM_BLOCO];
+    int registro_anterior = escalonador_ativar(0);      
+    int resultado = ler_meio(bloco, buf);
+    if (resultado == 0) {
+        buf[posicao] = (unsigned char)(buf[posicao] + 1); 
+        resultado = gravar_meio(bloco, buf);            
+    }
+    escalonador_ativar(registro_anterior);
+    return resultado;
 }
