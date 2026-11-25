@@ -12,8 +12,8 @@ Simulador de sistema operacional em C, feito em cinco etapas que se integram. É
 |---|---|---|---|
 | 1 | Sistema de Arquivos | 1 nov | Concluída |
 | 2 | Entrada/Saída (escalonamento de disco, RAID, SSD) | 8 nov | Concluída |
-| 3 | Segurança e Proteção (usuários, ACL, criptografia, antivírus) | 15 nov | Em andamento |
-| 4 | Gerenciamento de Memória | 22 nov | Pendente |
+| 3 | Segurança e Proteção (usuários, ACL, criptografia, antivírus) | 15 nov | Concluída |
+| 4 | Gerenciamento de Memória (área reservada, paginação, swap) | 22 nov | Em andamento |
 | 5 | Processos e Concorrência | 29 nov | Pendente |
 
 ## 2. Compilar e executar
@@ -39,15 +39,17 @@ src/
 │                          # e es (comandos io, raid, ssd e meio)          [Etapas 1 e 2]
 ├── sistema_arquivos/      # fs: árvore, CRUD, permissões e criptografia de arquivos
 ├── seguranca/             # seguranca: usuários, grupos, sessão, ACL e auditoria
+├── memoria/               # processo (tabela), reservada (área contígua), paginacao (RAM dinâmica),
+│                          # swap e memoria (comandos)                                [Etapa 4]
 └── antivirus/             # antivirus: integridade dos blocos e assinaturas
 ```
 
-Uma pasta só usa as pastas de baixo: `comum` e `criptografia` não dependem de nada; `armazenamento` e `seguranca` usam `comum` e `criptografia`; `sistema_arquivos` usa essas três; `antivirus` usa `sistema_arquivos`, `armazenamento` e `seguranca`; o `main` usa tudo. O `fs` se registra no `seguranca` para criar o `/home/<usuário>`, sem que o `seguranca` precise conhecer o sistema de arquivos. Novas etapas ganham pasta própria (`memoria/`, `processos/`).
+Uma pasta só usa as pastas de baixo: `comum` e `criptografia` não dependem de nada; `armazenamento` e `seguranca` usam `comum` e `criptografia`; `sistema_arquivos` usa essas três; `antivirus` usa `sistema_arquivos`, `armazenamento` e `seguranca`; `memoria` usa `comum`, `armazenamento`, `seguranca` e `sistema_arquivos`; o `main` usa tudo. O `fs` se registra no `seguranca` para criar o `/home/<usuário>`, sem que o `seguranca` precise conhecer o sistema de arquivos. A próxima etapa ganha pasta própria (`processos/`).
 
 - Funções que podem falhar devolvem `0` (ok) ou `-1`, com a mensagem em `reg_ultimo_erro()`; `ERRO_JA_EXIBIDO` indica que o comando já mostrou na tela o motivo da recusa.
 - Todo comando recebe `(int argc, char **argv)`; novos comandos entram como uma linha na tabela `comandos` do `main.c`.
 - Os `#include` levam o caminho da pasta (`#include "armazenamento/disco.h"`). Nomes de pasta não podem ter espaços, por causa do `make`. O Makefile compila `src/*.c` e `src/*/*.c` sozinho, então criar um módulo ou uma pasta não exige mexer nele.
-- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `seguranca_`, `cripto_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
+- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `seguranca_`, `cripto_`, `processo_`, `reservada_`, `paginacao_`, `swap_`, `memoria_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
 
 ## 4. Etapa 1: Sistema de Arquivos
 
@@ -159,10 +161,38 @@ Resultado: Possível modificação direta não autorizada no bloco do disco.
 
 O `audit_log` mostra o registro de auditoria: negações de acesso, logins (inclusive os que falham), `chmod`, `chown`, criptografia e varreduras.
 
-## 7. Limitações
+## 7. Etapa 4: Gerenciamento de Memória
+
+A RAM simulada tem duas áreas. A **Área Reservada** (4 MB, o primeiro 1 MB é o núcleo do SO) guarda processos **críticos** em blocos contíguos, sem paginação. A **RAM Dinâmica** (16 molduras de 4 KB) guarda os processos **normais**, divididos em páginas de 4 KB carregadas só quando usadas (paginação por demanda). Página que sai da RAM vai para o **swap** (128 posições de 4 KB no Disco 1), e cada leitura ou gravação de swap entra na fila do escalonador da Etapa 2 (`io fila`, `io auto on`).
+
+| Comando | Função |
+|---|---|
+| `create_process --name <nome> --size <tam> [--type critical\|normal]` | cria o processo (padrão: normal); `--file <caminho>` usa o tamanho de um arquivo e exige permissão `x` |
+| `terminate_process --name <nome>` | encerra e libera molduras, swap ou o bloco reservado |
+| `memory_status [--reserved\|--virtual]`, `memory_status --process <nome>` | mapa, ocupação, fragmentações, estatísticas e tabela de páginas |
+| `memory_compact --reserved` | junta as lacunas da Área Reservada |
+| `translate_address --process <nome> --page <N> [--offset <bytes>]` | página lógica -> moldura física (só consulta a tabela) |
+| `execute_step --process <nome> --instruction "LOAD_DATA Página <N>"` | acessa a página; `STORE_DATA` escreve nela |
+| `memory_algoritmo [fifo\|lru\|segunda_chance]`, `memory_relatorio [n]` | algoritmo de troca (padrão: LRU) e intervalo do relatório periódico (padrão: 5; 0 desliga) |
+
+**Termos.** *Moldura* é um pedaço da RAM do tamanho de uma página. *Page fault* é o acesso a uma página que não está na RAM: o sistema traz a página do swap e, se não houver moldura livre, escolhe uma *vítima* (FIFO: a mais antiga; LRU: a usada há mais tempo; Segunda Chance: FIFO que poupa uma vez a página usada recentemente). A vítima só é gravada no swap na primeira saída ou se foi modificada. *Fragmentação interna* é o espaço perdido na última página de um processo; *externa* é a memória livre dividida em lacunas que impedem um bloco contíguo grande, resolvida pela *compactação*.
+
+**Segurança.** Criar ou encerrar processo crítico, `memory_status --reserved`, `memory_compact`, `memory_algoritmo` e `memory_relatorio` exigem MODO_KERNEL. Um processo normal só é acessado ou encerrado pelo dono (ou pelo kernel), e o acesso a página inexistente é recusado e vai para o `audit_log`.
+
+```
+> create_process --name Kernel_NetDriver --size 1024KB --type critical
+- Alocado de forma contígua na Área Reservada: [1.5 MB até 2.5 MB] (1024 KB)
+> execute_step --process App_Navegador --instruction "LOAD_DATA Página 2"
+[PAGE FAULT DETECTADO]: Página Lógica 2 ausente na RAM!
+Memória RAM cheia. Executando Substituição de Página (Algoritmo LRU):
+- Removendo Página Lógica 0 do PID 100 (App_Navegador) da RAM -> Salvando no Swap (Disco) [...]
+```
+
+## 8. Limitações
 
 - **Etapa 1:** tudo na RAM; 16 blocos (no máximo 15 arquivos); nomes de até 63 caracteres; o `read` mostra só 16 bytes do conteúdo.
 - **Etapa 2:** só o deslocamento da cabeça é simulado (sem tempo de rotação), com 200 trilhas distribuídas igualmente pelos blocos; fila de 128 requisições por disco (se encher, é atendida em silêncio); um disco falho por vez, e RAID 0 ou "sem RAID" perdem os dados (reinicie o simulador); SSD em modelo reduzido (8 blocos de apagamento de 4 páginas), sem limite de apagamentos; sem relógio simulado.
 - **Etapa 3:** as permissões são conferidas no arquivo ou diretório pedido, não em cada diretório do caminho; até 8 usuários, 8 grupos e 4 grupos extras por usuário; o SHA-256 e a cifra são didáticos (não servem para uso real); o registro de auditoria guarda os últimos 64 eventos, só na memória e sem horário; a leitura de senha sem eco foi escrita para Windows (`_getch`) e Linux, e com a entrada redirecionada a senha vem da linha seguinte.
+- **Etapa 4:** o swap guarda só o controle das páginas (sem conteúdo); a Área Reservada usa first-fit (primeiro bloco livre que couber) e blocos em KB inteiros; até 16 processos, 64 páginas cada, e o total de páginas não passa das 128 posições do swap; cada acesso avança o relógio simulado em 5 ms; processo crítico não é paginado nem usa o swap; PIDs começam em 100.
 - **Comandos:** até 16 palavras; aspas duplas agrupam palavras, sem escape de aspa.
 - **Windows:** o terminal precisa de UTF-8 (`chcp 65001`; no PowerShell, redirecionando a saída, use também `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`), e o `make clean` usa `rm`, que não existe no PowerShell puro.

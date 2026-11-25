@@ -20,6 +20,7 @@ void fs_cwd_path(char *out, size_t cap);
 int fs_listar_arquivos(const char *caminho, InfoArquivo *saida, int maximo);
 int fs_info_arquivo(const char *caminho, InfoArquivo *info);
 int fs_criar_diretorio_pessoal(const char *nome_usuario, int uid, int gid);
+int fs_exigir_execucao(const char *caminho);
 
 int cmd_mkdir(int argc, char **argv);
 int cmd_create(int argc, char **argv);

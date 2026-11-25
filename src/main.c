@@ -6,6 +6,7 @@
 #include "armazenamento/es.h"
 #include "seguranca/seguranca.h"
 #include "antivirus/antivirus.h"
+#include "memoria/memoria.h"
 
 #define TAM_LINHA 512    
 #define MAX_ARGS 16     
@@ -62,6 +63,20 @@ static int cmd_help(int argc, char **argv) {
            "  antivirus_sig [add <texto>]       lista ou adiciona assinaturas (kernel)\n"
            "  adulterar_bloco <arq> [--bloco N] simula alteração direta no disco (kernel)\n"
            "  audit_log [n]                     registro de auditoria (kernel)\n"
+           "\nGerenciamento de memória:\n"
+           "  create_process --name <nome> --size <tam> [--type critical|normal]\n"
+           "                                    cria processo (critical = Área Reservada, kernel)\n"
+           "  create_process --name <nome> --file <caminho>   usa o tamanho de um arquivo (exige x)\n"
+           "  terminate_process --name <nome>   encerra o processo e libera a memória\n"
+           "  memory_status [--reserved|--virtual]   mapa, ocupação e fragmentação (--reserved: kernel)\n"
+           "  memory_status --process <nome>    tabela de páginas do processo\n"
+           "  memory_compact --reserved         compacta a Área Reservada (kernel)\n"
+           "  translate_address --process <nome> --page <N> [--offset <bytes>]\n"
+           "                                    página lógica -> moldura física\n"
+           "  execute_step --process <nome> --instruction \"LOAD_DATA Página <N>\"\n"
+           "                                    acessa uma página (STORE_DATA escreve)\n"
+           "  memory_algoritmo [fifo|lru|segunda_chance]   troca o algoritmo de substituição (kernel)\n"
+           "  memory_relatorio [n]              relatório de fragmentação a cada n operações; 0 desliga (kernel)\n"
            "\n(kernel) = exige MODO_KERNEL (root ou sudo); fs_status, io, raid, ssd e meio também.\n"
            "  exit                              sai\n");
     return 0;
@@ -84,6 +99,10 @@ static const Command comandos[] = {
     { "decrypt_file", cmd_decrypt_file, 0 },
     { "antivirus_scan", cmd_antivirus_scan, 1 }, { "antivirus_sig", cmd_antivirus_sig, 1 },
     { "adulterar_bloco", cmd_adulterar_bloco, 1 },
+    { "create_process", cmd_create_process, 0 }, { "terminate_process", cmd_terminate_process, 0 },
+    { "memory_status", cmd_memory_status, 0 }, { "memory_compact", cmd_memory_compact, 1 },
+    { "translate_address", cmd_translate_address, 0 }, { "execute_step", cmd_execute_step, 0 },
+    { "memory_algoritmo", cmd_memory_algoritmo, 1 }, { "memory_relatorio", cmd_memory_relatorio, 1 },
 };
 
 static int dividir_linha(char *linha, char **palavras, int maximo) {
@@ -149,6 +168,7 @@ int main(void) {
     seguranca_init();
     fs_init();
     es_iniciar();
+    memoria_iniciar();
 
     char linha[TAM_LINHA];
     for (;;) {

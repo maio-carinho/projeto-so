@@ -18,8 +18,8 @@ typedef struct No {
     int inode;
     int blocos[TOTAL_BLOCOS];
     int n_blocos;
-    int id_dono;                    /* quem é o proprietário (UID) */
-    int id_grupo;                   /* grupo do arquivo (GID) */
+    int id_dono;                    
+    int id_grupo;                   
     int permissoes;                 /* rwx de dono, grupo e outros (ex.: 0750) */
     int criptografado;              /* 1 se o conteúdo gravado está cifrado */
     unsigned char sal[TAM_SAL];
@@ -824,6 +824,13 @@ int fs_info_arquivo(const char *caminho, InfoArquivo *info) {
     if (no->pasta) return reg_erro("'%s' é um diretório; informe um arquivo.", caminho);
     coletar_info(no, info, 1, 0);
     return 0;
+}
+
+int fs_exigir_execucao(const char *caminho) {
+    No *no;
+    if (resolve(caminho, &no) != 0) return -1;
+    if (no->pasta) return reg_erro("'%s' é um diretório; informe um arquivo.", caminho);
+    return exigir_permissao(no, 'x');
 }
 
 int fs_criar_diretorio_pessoal(const char *nome_usuario, int uid, int gid) {
