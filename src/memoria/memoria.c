@@ -48,7 +48,7 @@ static int iguais_ignorando_maiusculas(const char *a, const char *b) {
     return *a == *b;
 }
 
-static int interpretar_tamanho(const char *texto, long *bytes) {
+int memoria_interpretar_tamanho(const char *texto, long *bytes) {
     char *final;
     long valor = strtol(texto, &final, 10);
     long multiplicador = 1;
@@ -65,7 +65,7 @@ static int interpretar_tamanho(const char *texto, long *bytes) {
     return 0;
 }
 
-static int exigir_dono_ou_kernel(const Processo *processo, const char *acao) {
+int memoria_exigir_dono_ou_kernel(const Processo *processo, const char *acao) {
     if (seguranca_modo() == MODO_KERNEL || processo->dono_uid == seguranca_uid_atual()) return 0;
 
     const char *usuario = seguranca_nome_usuario(seguranca_uid_atual());
@@ -97,13 +97,23 @@ static void imprimir_relatorio_periodico(void) {
            diagnostico.maior_bloco_kb, diagnostico.fragmentos_livres);
 }
 
-static void contar_operacao(void) {
+void memoria_registrar_operacao(void) {
     operacoes_de_memoria++;
     if (intervalo_relatorio > 0 && operacoes_de_memoria % intervalo_relatorio == 0)
         imprimir_relatorio_periodico();
 }
 
-static int criar_processo_critico(const char *nome, long tamanho_bytes) {
+int memoria_tamanho_do_arquivo(const char *caminho, long *bytes) {
+    InfoArquivo info;
+    if (fs_info_arquivo(caminho, &info) != 0) return -1;
+    int negado = fs_exigir_execucao(caminho);
+    if (negado != 0) return negado;
+    if (info.tamanho <= 0) return reg_erro("O arquivo '%s' está vazio: não há o que carregar.", caminho);
+    *bytes = info.tamanho;
+    return 0;
+}
+
+static int criar_processo_critico(const char *nome, long tamanho_bytes, int exibir, Processo **criado) {
     int negado = seguranca_exigir_kernel("create_process --type critical");
     if (negado != 0) return negado;
 
@@ -114,18 +124,21 @@ static int criar_processo_critico(const char *nome, long tamanho_bytes) {
 
     Processo *processo = processo_criar(nome, PROCESSO_CRITICO, tamanho_kb * 1024, seguranca_uid_atual());
     processo->inicio_kb = inicio_kb;
+    *criado = processo;
 
     char de[32], ate[32];
     reservada_formatar_mb(inicio_kb, de, sizeof de);
     reservada_formatar_mb(inicio_kb + tamanho_kb, ate, sizeof ate);
-    printf("[CRIAÇÃO DE PROCESSO CRÍTICO - ÁREA RESERVADA]\n");
-    printf("- Alocado de forma contígua na Área Reservada: [%s até %s] (%ld KB)\n", de, ate, tamanho_kb);
+    if (exibir) {
+        printf("[CRIAÇÃO DE PROCESSO CRÍTICO - ÁREA RESERVADA]\n");
+        printf("- Alocado de forma contígua na Área Reservada: [%s até %s] (%ld KB)\n", de, ate, tamanho_kb);
+    }
     seguranca_registrar("PROCESSO CRÍTICO CRIADO: '%s' (PID %d), %ld KB em [%s até %s]",
                         nome, identificador, tamanho_kb, de, ate);
     return 0;
 }
 
-static int criar_processo_normal(const char *nome, long tamanho_bytes) {
+static int criar_processo_normal(const char *nome, long tamanho_bytes, int exibir, Processo **criado) {
     int paginas = (int)((tamanho_bytes + TAM_PAGINA - 1) / TAM_PAGINA);
     if (paginas > MAX_PAGINAS_POR_PROCESSO)
         return reg_erro("Processo grande demais: %d páginas (máximo de %d páginas, %d KB).",
@@ -135,41 +148,31 @@ static int criar_processo_normal(const char *nome, long tamanho_bytes) {
                         TOTAL_POSICOES_SWAP, paginacao_paginas_alocadas());
 
     Processo *processo = processo_criar(nome, PROCESSO_NORMAL, tamanho_bytes, seguranca_uid_atual());
-    paginacao_imprimir_criacao(processo);
+    *criado = processo;
+    if (exibir) paginacao_imprimir_criacao(processo);
     return 0;
 }
 
-int cmd_create_process(int argc, char **argv) {
-    const char *nome = valor_da_opcao(argc, argv, "--name");
-    const char *texto_tamanho = valor_da_opcao(argc, argv, "--size");
-    const char *arquivo = valor_da_opcao(argc, argv, "--file");
-    const char *texto_tipo = valor_da_opcao(argc, argv, "--type");
-
-    if (!nome || (!texto_tamanho && !arquivo) || (texto_tamanho && arquivo))
-        return reg_erro("Uso: create_process --name <nome> (--size <tam> | --file <caminho>) [--type critical|normal]");
-
-    TipoProcesso tipo = PROCESSO_NORMAL;
-    if (texto_tipo && strcmp(texto_tipo, "critical") == 0) tipo = PROCESSO_CRITICO;
-    else if (texto_tipo && strcmp(texto_tipo, "normal") != 0)
-        return reg_erro("Tipo inválido: '%s' (use critical ou normal)", texto_tipo);
-
-    long tamanho_bytes;
-    if (arquivo) {
-        InfoArquivo info;
-        if (fs_info_arquivo(arquivo, &info) != 0) return -1;
-        int negado = fs_exigir_execucao(arquivo);
-        if (negado != 0) return negado;
-        if (info.tamanho <= 0) return reg_erro("O arquivo '%s' está vazio: não há o que carregar.", arquivo);
-        tamanho_bytes = info.tamanho;
-    } else if (interpretar_tamanho(texto_tamanho, &tamanho_bytes) != 0) {
-        return -1;
-    }
-
+int memoria_criar_processo(const char *nome, TipoProcesso tipo, long tamanho_bytes, int exibir, Processo **criado) {
     if (processo_validar_novo(nome) != 0) return -1;
-    int resultado = tipo == PROCESSO_CRITICO ? criar_processo_critico(nome, tamanho_bytes)
-                                             : criar_processo_normal(nome, tamanho_bytes);
-    if (resultado == 0) contar_operacao();
-    return resultado;
+    return tipo == PROCESSO_CRITICO ? criar_processo_critico(nome, tamanho_bytes, exibir, criado)
+                                    : criar_processo_normal(nome, tamanho_bytes, exibir, criado);
+}
+
+void memoria_liberar_processo(Processo *processo, ResumoLiberacao *resumo) {
+    ResumoLiberacao descartado;
+    if (!resumo) resumo = &descartado;
+    memset(resumo, 0, sizeof *resumo);
+    if (processo->memoria_liberada) return;
+
+    if (processo->tipo == PROCESSO_CRITICO) {
+        long inicio_kb, tamanho_kb;
+        if (reservada_liberar(processo->identificador, &inicio_kb, &tamanho_kb) == 0)
+            resumo->kb_reservados = tamanho_kb;
+    } else {
+        paginacao_liberar_processo(processo, &resumo->molduras, &resumo->posicoes_swap);
+    }
+    processo->memoria_liberada = 1;
 }
 
 int cmd_terminate_process(int argc, char **argv) {
@@ -178,6 +181,15 @@ int cmd_terminate_process(int argc, char **argv) {
 
     Processo *processo = processo_por_nome(nome);
     if (!processo) return reg_erro("Processo '%s' não encontrado.", nome);
+
+    if (processo->memoria_liberada) {
+        int negado = memoria_exigir_dono_ou_kernel(processo, "encerrar o processo");
+        if (negado != 0) return negado;
+        printf("[ENCERRAMENTO DE PROCESSO] Processo '%s' (PID %d) já estava CONCLUÍDO: memória já devolvida, registro removido.\n",
+               processo->nome, processo->identificador);
+        processo_remover(processo);
+        return 0;
+    }
 
     if (processo->tipo == PROCESSO_CRITICO) {
         int negado = seguranca_exigir_kernel("terminate_process (processo crítico)");
@@ -192,7 +204,7 @@ int cmd_terminate_process(int argc, char **argv) {
         printf("Área de %ld KB no intervalo [%s a %s] liberada na Área Reservada da RAM.\n", tamanho_kb, de, ate);
         seguranca_registrar("PROCESSO CRÍTICO ENCERRADO: '%s' (PID %d)", processo->nome, processo->identificador);
     } else {
-        int negado = exigir_dono_ou_kernel(processo, "encerrar o processo");
+        int negado = memoria_exigir_dono_ou_kernel(processo, "encerrar o processo");
         if (negado != 0) return negado;
 
         int molduras, posicoes_swap;
@@ -202,11 +214,13 @@ int cmd_terminate_process(int argc, char **argv) {
     }
 
     processo_remover(processo);
-    contar_operacao();
+    memoria_registrar_operacao();
     return 0;
 }
 
 static int exigir_processo_paginado(const Processo *processo) {
+    if (processo->memoria_liberada)
+        return reg_erro("'%s' já está CONCLUÍDO: sua memória foi devolvida.", processo->nome);
     if (processo->tipo == PROCESSO_NORMAL) return 0;
     char de[32], ate[32];
     reservada_formatar_mb(processo->inicio_kb, de, sizeof de);
@@ -247,7 +261,7 @@ int cmd_translate_address(int argc, char **argv) {
     Processo *processo = processo_por_nome(nome);
     if (!processo) return reg_erro("Processo '%s' não encontrado.", nome);
     if (exigir_processo_paginado(processo) != 0) return -1;
-    int negado = exigir_dono_ou_kernel(processo, "consultar a tradução de endereços do processo");
+    int negado = memoria_exigir_dono_ou_kernel(processo, "consultar a tradução de endereços do processo");
     if (negado != 0) return negado;
     negado = exigir_pagina_valida(processo, pagina);
     if (negado != 0) return negado;
@@ -286,13 +300,13 @@ int cmd_execute_step(int argc, char **argv) {
     Processo *processo = processo_por_nome(nome);
     if (!processo) return reg_erro("Processo '%s' não encontrado.", nome);
     if (exigir_processo_paginado(processo) != 0) return -1;
-    int negado = exigir_dono_ou_kernel(processo, "acessar a memória do processo");
+    int negado = memoria_exigir_dono_ou_kernel(processo, "acessar a memória do processo");
     if (negado != 0) return negado;
     negado = exigir_pagina_valida(processo, pagina);
     if (negado != 0) return negado;
 
     paginacao_acessar(processo, (int)pagina, escrita);
-    contar_operacao();
+    memoria_registrar_operacao();
     return 0;
 }
 
@@ -330,7 +344,7 @@ int cmd_memory_status(int argc, char **argv) {
         Processo *processo = processo_por_nome(nome);
         if (!processo) return reg_erro("Processo '%s' não encontrado.", nome);
         if (exigir_processo_paginado(processo) != 0) return -1;
-        int negado = exigir_dono_ou_kernel(processo, "consultar a tabela de páginas do processo");
+        int negado = memoria_exigir_dono_ou_kernel(processo, "consultar a tabela de páginas do processo");
         if (negado != 0) return negado;
         paginacao_imprimir_tabela(processo);
         return 0;
@@ -374,7 +388,7 @@ int cmd_memory_compact(int argc, char **argv) {
     printf("Custo: %d bloco(s) movido(s), %ld KB copiados dentro da RAM.\n", movidos, kb_copiados);
     seguranca_registrar("COMPACTAÇÃO DA ÁREA RESERVADA: %d bloco(s) movido(s), maior bloco livre agora %ld KB",
                         movidos, depois.maior_bloco_kb);
-    contar_operacao();
+    memoria_registrar_operacao();
     return 0;
 }
 

@@ -13,8 +13,8 @@ Simulador de sistema operacional em C, feito em cinco etapas que se integram. É
 | 1 | Sistema de Arquivos | 1 nov | Concluída |
 | 2 | Entrada/Saída (escalonamento de disco, RAID, SSD) | 8 nov | Concluída |
 | 3 | Segurança e Proteção (usuários, ACL, criptografia, antivírus) | 15 nov | Concluída |
-| 4 | Gerenciamento de Memória (área reservada, paginação, swap) | 22 nov | Em andamento |
-| 5 | Processos e Concorrência | 29 nov | Pendente |
+| 4 | Gerenciamento de Memória (área reservada, paginação, swap) | 22 nov | Concluída |
+| 5 | Processos e Concorrência (escalonador de CPU, syscalls, threads e mutex) | 29 nov | Em andamento |
 
 ## 2. Compilar e executar
 
@@ -41,15 +41,17 @@ src/
 ├── seguranca/             # seguranca: usuários, grupos, sessão, ACL e auditoria
 ├── memoria/               # processo (tabela), reservada (área contígua), paginacao (RAM dinâmica),
 │                          # swap e memoria (comandos)                                [Etapa 4]
+├── processos/             # execucao (relógio e estados), cpu (escalonador e métricas),
+│                          # concorrencia (threads e mutex), processos (comandos)       [Etapa 5]
 └── antivirus/             # antivirus: integridade dos blocos e assinaturas
 ```
 
-Uma pasta só usa as pastas de baixo: `comum` e `criptografia` não dependem de nada; `armazenamento` e `seguranca` usam `comum` e `criptografia`; `sistema_arquivos` usa essas três; `antivirus` usa `sistema_arquivos`, `armazenamento` e `seguranca`; `memoria` usa `comum`, `armazenamento`, `seguranca` e `sistema_arquivos`; o `main` usa tudo. O `fs` se registra no `seguranca` para criar o `/home/<usuário>`, sem que o `seguranca` precise conhecer o sistema de arquivos. A próxima etapa ganha pasta própria (`processos/`).
+Uma pasta só usa as pastas de baixo: `comum` e `criptografia` não dependem de nada; `armazenamento` e `seguranca` usam `comum` e `criptografia`; `sistema_arquivos` usa essas três; `antivirus` usa `sistema_arquivos`, `armazenamento` e `seguranca`; `memoria` usa `comum`, `armazenamento`, `seguranca` e `sistema_arquivos`; `processos` usa todas essas e a `memoria`; o `main` usa tudo. O `fs` se registra no `seguranca` para criar o `/home/<usuário>`, sem que o `seguranca` precise conhecer o sistema de arquivos.
 
 - Funções que podem falhar devolvem `0` (ok) ou `-1`, com a mensagem em `reg_ultimo_erro()`; `ERRO_JA_EXIBIDO` indica que o comando já mostrou na tela o motivo da recusa.
 - Todo comando recebe `(int argc, char **argv)`; novos comandos entram como uma linha na tabela `comandos` do `main.c`.
 - Os `#include` levam o caminho da pasta (`#include "armazenamento/disco.h"`). Nomes de pasta não podem ter espaços, por causa do `make`. O Makefile compila `src/*.c` e `src/*/*.c` sozinho, então criar um módulo ou uma pasta não exige mexer nele.
-- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `seguranca_`, `cripto_`, `processo_`, `reservada_`, `paginacao_`, `swap_`, `memoria_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
+- Prefixos: `disco_`, `fs_`, `raid_`, `escalonador_`, `ssd_`, `es_`, `seguranca_`, `cripto_`, `processo_`, `reservada_`, `paginacao_`, `swap_`, `memoria_`, `execucao_`, `cpu_`, `concorrencia_`, `processos_`, `argumento_`, `cmd_` (comandos) e `reg_` (erros). Nomes em português, sem acento.
 
 ## 4. Etapa 1: Sistema de Arquivos
 
@@ -167,7 +169,7 @@ A RAM simulada tem duas áreas. A **Área Reservada** (4 MB, o primeiro 1 MB é 
 
 | Comando | Função |
 |---|---|
-| `create_process --name <nome> --size <tam> [--type critical\|normal]` | cria o processo (padrão: normal); `--file <caminho>` usa o tamanho de um arquivo e exige permissão `x` |
+| `create_process --name <nome> --size <tam> [--type critical\|normal]` | cria o processo (padrão: normal); `--file <caminho>` usa o tamanho de um arquivo e exige permissão `x` (o comando está em `processos/`, veja a Etapa 5) |
 | `terminate_process --name <nome>` | encerra e libera molduras, swap ou o bloco reservado |
 | `memory_status [--reserved\|--virtual]`, `memory_status --process <nome>` | mapa, ocupação, fragmentações, estatísticas e tabela de páginas |
 | `memory_compact --reserved` | junta as lacunas da Área Reservada |
@@ -188,11 +190,35 @@ Memória RAM cheia. Executando Substituição de Página (Algoritmo LRU):
 - Removendo Página Lógica 0 do PID 100 (App_Navegador) da RAM -> Salvando no Swap (Disco) [...]
 ```
 
-## 8. Limitações
+## 8. Etapa 5: Processos e Concorrência
+
+Cada processo tem um **PCB** (bloco de controle: estado, prioridade, burst, tempos, syscalls, threads) e passa por **NOVO → PRONTO → EXECUTANDO → BLOQUEADO → CONCLUÍDO**. O relógio simulado anda de 1 em 1 ms. A cada ms o processo na CPU referencia uma página (HIT ou page fault, com o LRU da Etapa 4); ao terminar, devolve suas molduras e posições de swap. Syscalls de disco (`read_disk`, `write_disk`) entram na fila do escalonador de disco da Etapa 2 (`io fila`).
+
+| Comando | Função |
+|---|---|
+| `create_process --name <nome> --burst <N>ms --priority <1-3> [--syscall "read_disk at <N>ms (duration: <N>ms)"\|random] [--size <tam>] [--type critical\|normal] [--arrival <N>ms]` | cria o processo com perfil de CPU e E/S (sem `--size`: 32 KB; prioridade 1 = Alta exige kernel; `--syscall` pode repetir até 3 vezes) |
+| `run_simulation [--process <nome>] [--steps <N>]` | executa passo a passo, mostrando a página acessada e a tabela das molduras; sem `--process` roda o que o escalonador escolher (kernel) |
+| `schedule [--algorithm Priority_RR\|RR\|FCFS] [--quantum <N>ms] [--trace]` | escalona tudo até o fim, mostra a linha do tempo e as métricas (kernel) |
+| `metrics` / `process_status` | métricas (WT, TAT, resposta, trocas de contexto, CPU) / estados, threads e mutexes |
+| `create_thread --process <p> --name <t>` | cria uma thread no processo |
+| `mutex_lock` / `mutex_unlock --process <p> --thread <t> --mutex <m>` | trava/libera; thread que encontra o mutex ocupado vai para BLOQUEADO e a primeira da fila o recebe no `unlock` |
+
+**Termos.** *Burst* é o tempo de CPU que o processo precisa. *Syscall* é um pedido de E/S ao sistema: no instante marcado (contado em ms de CPU já usados) o processo vira BLOQUEADO pela duração dada. *Quantum* é a fatia de tempo do Round-Robin. Em `Priority_RR`, a fila de maior prioridade sempre vai primeiro, quem tem a mesma prioridade reveza por quantum, e um processo de prioridade maior que fica pronto toma a CPU (preempção). *WT* é o tempo esperando na fila de prontos; *TAT* é do chegar ao terminar (burst + WT + tempo em E/S). *Mutex* garante que só uma thread por vez entre na região crítica.
+
+**Segurança.** `schedule`, `run_simulation` sem `--process` e prioridade 1 exigem MODO_KERNEL; só o dono (ou o kernel) executa um processo ou usa suas threads; criar processo crítico continua só para o kernel.
+
+```
+> schedule --algorithm Priority_RR --quantum 2ms
+[ 0ms -  2ms] Executando PID 101 (A) | Quantum 2ms expirou -> Volta p/ Fila P1
+[ 4ms -  5ms] Executando PID 101 (A) | Dispara E/S de Disco -> Estado BLOQUEADO (até t=9ms)
+```
+
+## 9. Limitações
 
 - **Etapa 1:** tudo na RAM; 16 blocos (no máximo 15 arquivos); nomes de até 63 caracteres; o `read` mostra só 16 bytes do conteúdo.
 - **Etapa 2:** só o deslocamento da cabeça é simulado (sem tempo de rotação), com 200 trilhas distribuídas igualmente pelos blocos; fila de 128 requisições por disco (se encher, é atendida em silêncio); um disco falho por vez, e RAID 0 ou "sem RAID" perdem os dados (reinicie o simulador); SSD em modelo reduzido (8 blocos de apagamento de 4 páginas), sem limite de apagamentos; sem relógio simulado.
 - **Etapa 3:** as permissões são conferidas no arquivo ou diretório pedido, não em cada diretório do caminho; até 8 usuários, 8 grupos e 4 grupos extras por usuário; o SHA-256 e a cifra são didáticos (não servem para uso real); o registro de auditoria guarda os últimos 64 eventos, só na memória e sem horário; a leitura de senha sem eco foi escrita para Windows (`_getch`) e Linux, e com a entrada redirecionada a senha vem da linha seguinte.
-- **Etapa 4:** o swap guarda só o controle das páginas (sem conteúdo); a Área Reservada usa first-fit (primeiro bloco livre que couber) e blocos em KB inteiros; até 16 processos, 64 páginas cada, e o total de páginas não passa das 128 posições do swap; cada acesso avança o relógio simulado em 5 ms; processo crítico não é paginado nem usa o swap; PIDs começam em 100.
+- **Etapa 4:** o swap guarda só o controle das páginas (sem conteúdo); a Área Reservada usa first-fit (primeiro bloco livre que couber) e blocos em KB inteiros; até 16 processos, 64 páginas cada, e o total de páginas não passa das 128 posições do swap; cada acesso avança o relógio simulado em 5 ms; processo crítico não é paginado nem usa o swap.
+- **Etapa 5:** uma só CPU; a página acessada em cada ms é sorteada (com localidade) com sequência sempre igual, e as syscalls `random` também; threads só se movem pelos comandos `mutex_lock`/`mutex_unlock` (não há escalonamento de threads), e o bloqueio por mutex vale para a thread, não para o processo; PIDs começam em 101; no máximo 3 syscalls, 4 threads e 4 mutexes por processo.
 - **Comandos:** até 16 palavras; aspas duplas agrupam palavras, sem escape de aspa.
 - **Windows:** o terminal precisa de UTF-8 (`chcp 65001`; no PowerShell, redirecionando a saída, use também `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`), e o `make clean` usa `rm`, que não existe no PowerShell puro.

@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "memoria/paginacao.h"
@@ -27,6 +28,17 @@ static long relogio_ms;
 static long contador_ordem;
 static Estatisticas estatisticas;
 
+static int exibir_detalhes = 1;
+static ResultadoAcesso *resultado_atual;
+
+static void mostrar(const char *formato, ...) {
+    if (!exibir_detalhes) return;
+    va_list argumentos;
+    va_start(argumentos, formato);
+    vprintf(formato, argumentos);
+    va_end(argumentos);
+}
+
 void paginacao_iniciar(void) {
     memset(molduras, 0, sizeof molduras);
     memset(&estatisticas, 0, sizeof estatisticas);
@@ -55,7 +67,7 @@ int paginacao_paginas_alocadas(void) {
     int total = 0;
     for (int i = 0; i < MAX_PROCESSOS; i++) {
         const Processo *processo = processo_na_posicao(i);
-        if (processo && processo->tipo == PROCESSO_NORMAL) total += processo->total_paginas;
+        if (processo_usa_memoria(processo) && processo->tipo == PROCESSO_NORMAL) total += processo->total_paginas;
     }
     return total;
 }
@@ -140,12 +152,12 @@ static int escolher_vitima(void) {
         for (int i = 0; i < TOTAL_MOLDURAS; i++)
             if (molduras[i].ocupada && (vitima < 0 || molduras[i].ultimo_acesso_ms < molduras[vitima].ultimo_acesso_ms))
                 vitima = i;
-        printf("- Analisando histórico de acesso: Página Lógica %d do PID %d não é usada há %ld ms (Mais antiga).\n",
+        mostrar("- Analisando histórico de acesso: Página Lógica %d do PID %d não é usada há %ld ms (Mais antiga).\n",
                molduras[vitima].pagina, molduras[vitima].identificador,
                relogio_ms - molduras[vitima].ultimo_acesso_ms);
     } else if (algoritmo == ALGORITMO_FIFO) {
         vitima = moldura_mais_antiga_na_fila();
-        printf("- Fila de chegada (FIFO): Página Lógica %d do PID %d está há mais tempo na RAM (%ld ms).\n",
+        mostrar("- Fila de chegada (FIFO): Página Lógica %d do PID %d está há mais tempo na RAM (%ld ms).\n",
                molduras[vitima].pagina, molduras[vitima].identificador,
                relogio_ms - molduras[vitima].carregada_em_ms);
     } else {
@@ -153,11 +165,11 @@ static int escolher_vitima(void) {
             vitima = moldura_mais_antiga_na_fila();
             Moldura *candidata = &molduras[vitima];
             if (!candidata->referenciada) {
-                printf("- Segunda Chance: Página Lógica %d do PID %d está no início da fila com bit de referência 0 -> será a vítima.\n",
+                mostrar("- Segunda Chance: Página Lógica %d do PID %d está no início da fila com bit de referência 0 -> será a vítima.\n",
                        candidata->pagina, candidata->identificador);
                 break;
             }
-            printf("- Segunda Chance: Página Lógica %d do PID %d está no início da fila com bit de referência 1 -> ganha outra chance (bit zerado, vai para o fim da fila).\n",
+            mostrar("- Segunda Chance: Página Lógica %d do PID %d está no início da fila com bit de referência 1 -> ganha outra chance (bit zerado, vai para o fim da fila).\n",
                    candidata->pagina, candidata->identificador);
             candidata->referenciada = 0;
             candidata->ordem_fila = ++contador_ordem;
@@ -171,16 +183,21 @@ static void retirar_da_ram(int moldura) {
     Processo *dono = processo_por_identificador(ocupada->identificador);
     EntradaTabelaPaginas *entrada = &dono->tabela_paginas[ocupada->pagina];
 
-    printf("- Removendo Página Lógica %d do PID %d (%s) da RAM -> ", ocupada->pagina, dono->identificador, dono->nome);
+    resultado_atual->substituiu = 1;
+    resultado_atual->vitima_identificador = dono->identificador;
+    resultado_atual->vitima_pagina = ocupada->pagina;
+    resultado_atual->vitima_inativa_ms = relogio_ms - ocupada->ultimo_acesso_ms;
+    mostrar("- Removendo Página Lógica %d do PID %d (%s) da RAM -> ", ocupada->pagina, dono->identificador, dono->nome);
     if (entrada->modificada || entrada->posicao_swap < 0) {
         if (entrada->posicao_swap < 0) entrada->posicao_swap = swap_reservar_posicao();
         swap_gravar(entrada->posicao_swap, dono->identificador, ocupada->pagina);
+        resultado_atual->vitima_gravada_no_swap = 1;
         char local[96];
         swap_descrever_posicao(entrada->posicao_swap, local, sizeof local);
-        printf("Salvando no Swap (Disco) [%s].\n", local);
+        mostrar("Salvando no Swap (Disco) [%s].\n", local);
     } else {
         estatisticas.descartes++;
-        printf("página sem alterações e com cópia em dia no Swap: descartada sem gravar.\n");
+        mostrar("página sem alterações e com cópia em dia no Swap: descartada sem gravar.\n");
     }
 
     entrada->presente = 0;
@@ -193,12 +210,13 @@ static void carregar_na_ram(Processo *processo, int pagina, int moldura) {
     EntradaTabelaPaginas *entrada = &processo->tabela_paginas[pagina];
 
     if (entrada->posicao_swap >= 0) {
+        resultado_atual->veio_do_swap = 1;
         swap_ler(entrada->posicao_swap, processo->identificador, pagina);
         char local[96];
         swap_descrever_posicao(entrada->posicao_swap, local, sizeof local);
-        printf("- Trazendo Página Lógica %d do Swap (Disco) [%s].\n", pagina, local);
+        mostrar("- Trazendo Página Lógica %d do Swap (Disco) [%s].\n", pagina, local);
     } else {
-        printf("- Página Lógica %d ainda não tem cópia no disco: nasce preenchida com zeros.\n", pagina);
+        mostrar("- Página Lógica %d ainda não tem cópia no disco: nasce preenchida com zeros.\n", pagina);
     }
 
     Moldura *destino = &molduras[moldura];
@@ -210,49 +228,71 @@ static void carregar_na_ram(Processo *processo, int pagina, int moldura) {
     destino->ultimo_acesso_ms = relogio_ms;
     destino->referenciada = 1;
 
+    resultado_atual->moldura = moldura;
     entrada->presente = 1;
     entrada->moldura = moldura;
     entrada->modificada = 0;
-    printf("- Carregando Página Lógica %d de %s na Moldura Física %d (RAM Dinâmica).\n", pagina, processo->nome, moldura);
-    printf("- Tabela de Páginas atualizada: Página Lógica %d ---> Moldura Física %d.\n", pagina, moldura);
+    mostrar("- Carregando Página Lógica %d de %s na Moldura Física %d (RAM Dinâmica).\n", pagina, processo->nome, moldura);
+    mostrar("- Tabela de Páginas atualizada: Página Lógica %d ---> Moldura Física %d.\n", pagina, moldura);
 }
 
-void paginacao_acessar(Processo *processo, int pagina, int escrita) {
+static void executar_acesso(Processo *processo, int pagina, int escrita) {
     EntradaTabelaPaginas *entrada = &processo->tabela_paginas[pagina];
 
-    relogio_ms += MS_POR_REFERENCIA;
     estatisticas.acessos++;
-    printf("[CPU - REFERÊNCIA DE MEMÓRIA EM EXECUÇÃO]\n");
-    printf("%s requisita acesso à Página Lógica %d (%s)...\n", processo->nome, pagina,
+    mostrar("[CPU - REFERÊNCIA DE MEMÓRIA EM EXECUÇÃO]\n");
+    mostrar("%s requisita acesso à Página Lógica %d (%s)...\n", processo->nome, pagina,
            escrita ? "escrita" : "leitura");
 
     if (entrada->presente) {
         estatisticas.acertos++;
+        resultado_atual->acerto = 1;
+        resultado_atual->moldura = entrada->moldura;
         Moldura *moldura = &molduras[entrada->moldura];
         moldura->ultimo_acesso_ms = relogio_ms;
         moldura->referenciada = 1;
         if (escrita) entrada->modificada = 1;
-        printf("- Consulta Tabela de Páginas -> Página Lógica %d está na RAM (Moldura Física %d) [HIT]\n",
+        mostrar("- Consulta Tabela de Páginas -> Página Lógica %d está na RAM (Moldura Física %d) [HIT]\n",
                pagina, entrada->moldura);
         return;
     }
 
     estatisticas.page_faults++;
-    printf("- Consulta Tabela de Páginas -> Página Lógica %d NÃO ESTÁ NA RAM!\n", pagina);
-    printf("[PAGE FAULT DETECTADO]: Página Lógica %d ausente na RAM!\n", pagina);
+    mostrar("- Consulta Tabela de Páginas -> Página Lógica %d NÃO ESTÁ NA RAM!\n", pagina);
+    mostrar("[PAGE FAULT DETECTADO]: Página Lógica %d ausente na RAM!\n", pagina);
 
     int moldura = primeira_moldura_livre();
     if (moldura >= 0) {
-        printf("Há moldura livre na RAM (Moldura Física %d): nenhuma substituição necessária.\n", moldura);
+        mostrar("Há moldura livre na RAM (Moldura Física %d): nenhuma substituição necessária.\n", moldura);
     } else {
         estatisticas.substituicoes++;
-        printf("Memória RAM cheia. Executando Substituição de Página (Algoritmo %s):\n", paginacao_nome_algoritmo());
+        mostrar("Memória RAM cheia. Executando Substituição de Página (Algoritmo %s):\n", paginacao_nome_algoritmo());
         moldura = escolher_vitima();
         retirar_da_ram(moldura);
     }
 
     carregar_na_ram(processo, pagina, moldura);
     if (escrita) entrada->modificada = 1;
+}
+
+void paginacao_referenciar(Processo *processo, int pagina, int escrita, long instante_ms,
+                           int exibir, ResultadoAcesso *resultado) {
+    ResultadoAcesso descartado;
+    if (!resultado) resultado = &descartado;
+    memset(resultado, 0, sizeof *resultado);
+    resultado->moldura = -1;
+
+    if (instante_ms > relogio_ms) relogio_ms = instante_ms;
+    resultado->instante_ms = relogio_ms;
+
+    exibir_detalhes = exibir;
+    resultado_atual = resultado;
+    executar_acesso(processo, pagina, escrita);
+    exibir_detalhes = 1;
+}
+
+void paginacao_acessar(Processo *processo, int pagina, int escrita) {
+    paginacao_referenciar(processo, pagina, escrita, relogio_ms + MS_POR_REFERENCIA, 1, NULL);
 }
 
 void paginacao_traduzir(const Processo *processo, int pagina, long deslocamento) {
@@ -283,6 +323,10 @@ void paginacao_liberar_processo(Processo *processo, int *molduras_liberadas, int
             swap_liberar_posicao(entrada->posicao_swap);
             (*posicoes_swap_liberadas)++;
         }
+        entrada->presente = 0;
+        entrada->moldura = -1;
+        entrada->posicao_swap = -1;
+        entrada->modificada = 0;
     }
 }
 
@@ -331,7 +375,7 @@ long paginacao_fragmentacao_interna_total(int *processos_afetados) {
     int afetados = 0;
     for (int i = 0; i < MAX_PROCESSOS; i++) {
         const Processo *processo = processo_na_posicao(i);
-        if (!processo || processo->tipo != PROCESSO_NORMAL) continue;
+        if (!processo_usa_memoria(processo) || processo->tipo != PROCESSO_NORMAL) continue;
         long desperdicio = (long)processo->total_paginas * TAM_PAGINA - processo->tamanho_bytes;
         if (desperdicio > 0) afetados++;
         total += desperdicio;
@@ -345,7 +389,7 @@ void paginacao_imprimir_fragmentacao_interna(void) {
     int encontrou = 0;
     for (int i = 0; i < MAX_PROCESSOS; i++) {
         const Processo *processo = processo_na_posicao(i);
-        if (!processo || processo->tipo != PROCESSO_NORMAL) continue;
+        if (!processo_usa_memoria(processo) || processo->tipo != PROCESSO_NORMAL) continue;
         encontrou = 1;
         long desperdicio = (long)processo->total_paginas * TAM_PAGINA - processo->tamanho_bytes;
         long ocupados = TAM_PAGINA - desperdicio;

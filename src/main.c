@@ -7,6 +7,7 @@
 #include "seguranca/seguranca.h"
 #include "antivirus/antivirus.h"
 #include "memoria/memoria.h"
+#include "processos/processos.h"
 
 #define TAM_LINHA 512    
 #define MAX_ARGS 16     
@@ -67,6 +68,9 @@ static int cmd_help(int argc, char **argv) {
            "  create_process --name <nome> --size <tam> [--type critical|normal]\n"
            "                                    cria processo (critical = Área Reservada, kernel)\n"
            "  create_process --name <nome> --file <caminho>   usa o tamanho de um arquivo (exige x)\n"
+           "  create_process --name <nome> --burst <N>ms --priority <1-3> [--type critical|normal]\n"
+           "                 [--size <tam>] [--arrival <N>ms] [--syscall \"read_disk at <N>ms (duration: <N>ms)\"|random]\n"
+           "                                    perfil de CPU e E/S (prioridade 1 exige kernel)\n"
            "  terminate_process --name <nome>   encerra o processo e libera a memória\n"
            "  memory_status [--reserved|--virtual]   mapa, ocupação e fragmentação (--reserved: kernel)\n"
            "  memory_status --process <nome>    tabela de páginas do processo\n"
@@ -77,6 +81,15 @@ static int cmd_help(int argc, char **argv) {
            "                                    acessa uma página (STORE_DATA escreve)\n"
            "  memory_algoritmo [fifo|lru|segunda_chance]   troca o algoritmo de substituição (kernel)\n"
            "  memory_relatorio [n]              relatório de fragmentação a cada n operações; 0 desliga (kernel)\n"
+           "\nProcessos e concorrência:\n"
+           "  run_simulation [--process <nome>] [--steps <N>]   executa a CPU passo a passo (1 passo = 1ms)\n"
+           "                                    sem --process: roda o que o escalonador escolher (kernel)\n"
+           "  schedule [--algorithm Priority_RR|RR|FCFS] [--quantum <N>ms] [--trace]\n"
+           "                                    escalona todos os processos até o fim e mostra as métricas (kernel)\n"
+           "  metrics                           relatório de métricas (WT, TAT, trocas de contexto, CPU)\n"
+           "  process_status                    estados dos processos, threads e mutexes\n"
+           "  create_thread --process <nome> --name <thread>\n"
+           "  mutex_lock|mutex_unlock --process <nome> --thread <thread> --mutex <mutex>\n"
            "\n(kernel) = exige MODO_KERNEL (root ou sudo); fs_status, io, raid, ssd e meio também.\n"
            "  exit                              sai\n");
     return 0;
@@ -103,6 +116,10 @@ static const Command comandos[] = {
     { "memory_status", cmd_memory_status, 0 }, { "memory_compact", cmd_memory_compact, 1 },
     { "translate_address", cmd_translate_address, 0 }, { "execute_step", cmd_execute_step, 0 },
     { "memory_algoritmo", cmd_memory_algoritmo, 1 }, { "memory_relatorio", cmd_memory_relatorio, 1 },
+    { "run_simulation", cmd_run_simulation, 0 }, { "schedule", cmd_schedule, 1 },
+    { "metrics", cmd_metrics, 0 }, { "process_status", cmd_process_status, 0 },
+    { "create_thread", cmd_create_thread, 0 }, { "mutex_lock", cmd_mutex_lock, 0 },
+    { "mutex_unlock", cmd_mutex_unlock, 0 },
 };
 
 static int dividir_linha(char *linha, char **palavras, int maximo) {
@@ -169,6 +186,7 @@ int main(void) {
     fs_init();
     es_iniciar();
     memoria_iniciar();
+    processos_iniciar();
 
     char linha[TAM_LINHA];
     for (;;) {

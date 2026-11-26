@@ -8,6 +8,18 @@
 
 typedef enum { ALGORITMO_FIFO, ALGORITMO_LRU, ALGORITMO_SEGUNDA_CHANCE } AlgoritmoSubstituicao;
 
+typedef struct {
+    int acerto;                  
+    int moldura;                 
+    int veio_do_swap;            
+    int substituiu;              
+    int vitima_identificador;
+    int vitima_pagina;
+    long vitima_inativa_ms;      
+    int vitima_gravada_no_swap;  
+    long instante_ms;            
+} ResultadoAcesso;
+
 void paginacao_iniciar(void);
 
 int paginacao_definir_algoritmo(const char *nome);
@@ -19,6 +31,9 @@ int paginacao_ha_capacidade(int paginas_novas);
 void paginacao_imprimir_criacao(const Processo *processo);
 
 void paginacao_acessar(Processo *processo, int pagina, int escrita);
+
+void paginacao_referenciar(Processo *processo, int pagina, int escrita, long instante_ms,
+                           int exibir, ResultadoAcesso *resultado);
 
 void paginacao_traduzir(const Processo *processo, int pagina, long deslocamento);
 

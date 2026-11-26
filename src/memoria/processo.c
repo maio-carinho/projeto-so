@@ -36,7 +36,18 @@ Processo *processo_criar(const char *nome, TipoProcesso tipo, long tamanho_bytes
         novo->dono_uid = dono_uid;
         novo->tamanho_bytes = tamanho_bytes;
 
+        /* Perfil de CPU padrão; o create_process da Etapa 5 troca esses valores. */
+        novo->estado = ESTADO_PRONTO;
+        novo->prioridade = PRIORIDADE_PADRAO;
+        novo->burst_ms = BURST_PADRAO_MS;
+        novo->conclusao_ms = -1;
+        novo->primeira_execucao_ms = -1;
+        novo->semente_paginas = (unsigned int)novo->identificador * 2654435761u + 12345u;
+        for (int t = 0; t < MAX_THREADS_POR_PROCESSO; t++) novo->threads[t].mutex_esperado = -1;
+        for (int m = 0; m < MAX_MUTEXES_POR_PROCESSO; m++) novo->mutexes[m].dono = -1;
+
         if (tipo == PROCESSO_NORMAL) {
+            /* Arredonda para cima: o que sobra na última página é a fragmentação interna. */
             novo->total_paginas = (int)((tamanho_bytes + TAM_PAGINA - 1) / TAM_PAGINA);
             for (int p = 0; p < novo->total_paginas; p++) {
                 novo->tabela_paginas[p].presente = 0;
@@ -68,4 +79,24 @@ Processo *processo_por_identificador(int identificador) {
 Processo *processo_na_posicao(int posicao) {
     if (posicao < 0 || posicao >= MAX_PROCESSOS || !processos[posicao].em_uso) return NULL;
     return &processos[posicao];
+}
+
+int processo_usa_memoria(const Processo *processo) {
+    return processo && processo->em_uso && !processo->memoria_liberada;
+}
+
+int processo_listar_ordenados(const Processo **lista, int maximo) {
+    int quantidade = 0;
+    for (int i = 0; i < MAX_PROCESSOS && quantidade < maximo; i++) {
+        const Processo *p = processo_na_posicao(i);
+        if (!p) continue;
+        /* Inserção ordenada: empurra para a direita quem tem PID maior. */
+        int posicao = quantidade++;
+        while (posicao > 0 && lista[posicao - 1]->identificador > p->identificador) {
+            lista[posicao] = lista[posicao - 1];
+            posicao--;
+        }
+        lista[posicao] = p;
+    }
+    return quantidade;
 }
