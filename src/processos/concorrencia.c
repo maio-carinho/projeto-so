@@ -27,6 +27,15 @@ static int obter_processo(int argc, char **argv, Processo **processo) {
     return memoria_exigir_dono_ou_kernel(*processo, "usar threads do processo");
 }
 
+static int exigir_processo_ativo(const Processo *processo) {
+    if (processo->estado == ESTADO_BLOQUEADO)
+        return reg_erro("O processo '%s' está BLOQUEADO em E/S até t=%ldms: suas threads não executam agora.",
+                        processo->nome, processo->desbloqueio_em_ms);
+    if (processo->estado == ESTADO_NOVO)
+        return reg_erro("O processo '%s' ainda não chegou (chega em t=%ldms).", processo->nome, processo->chegada_ms);
+    return 0;
+}
+
 int cmd_create_thread(int argc, char **argv) {
     Processo *processo;
     int negado = obter_processo(argc, argv, &processo);
@@ -78,6 +87,8 @@ int cmd_mutex_lock(int argc, char **argv) {
     if (!nome_thread || !nome_mutex)
         return reg_erro("Uso: mutex_lock --process <processo> --thread <thread> --mutex <mutex>");
 
+    int inativo = exigir_processo_ativo(processo);
+    if (inativo != 0) return inativo;
     int thread = indice_da_thread(processo, nome_thread);
     if (thread < 0) return reg_erro("Thread '%s' não existe (use create_thread).", nome_thread);
     if (processo->threads[thread].estado == ESTADO_BLOQUEADO)
@@ -132,6 +143,8 @@ int cmd_mutex_unlock(int argc, char **argv) {
     if (!nome_thread || !nome_mutex)
         return reg_erro("Uso: mutex_unlock --process <processo> --thread <thread> --mutex <mutex>");
 
+    int inativo = exigir_processo_ativo(processo);
+    if (inativo != 0) return inativo;
     int thread = indice_da_thread(processo, nome_thread);
     int mutex = indice_do_mutex(processo, nome_mutex);
     if (thread < 0) return reg_erro("Thread '%s' não existe.", nome_thread);

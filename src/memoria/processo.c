@@ -36,7 +36,6 @@ Processo *processo_criar(const char *nome, TipoProcesso tipo, long tamanho_bytes
         novo->dono_uid = dono_uid;
         novo->tamanho_bytes = tamanho_bytes;
 
-        /* Perfil de CPU padrão; o create_process da Etapa 5 troca esses valores. */
         novo->estado = ESTADO_PRONTO;
         novo->prioridade = PRIORIDADE_PADRAO;
         novo->burst_ms = BURST_PADRAO_MS;
@@ -47,7 +46,6 @@ Processo *processo_criar(const char *nome, TipoProcesso tipo, long tamanho_bytes
         for (int m = 0; m < MAX_MUTEXES_POR_PROCESSO; m++) novo->mutexes[m].dono = -1;
 
         if (tipo == PROCESSO_NORMAL) {
-            /* Arredonda para cima: o que sobra na última página é a fragmentação interna. */
             novo->total_paginas = (int)((tamanho_bytes + TAM_PAGINA - 1) / TAM_PAGINA);
             for (int p = 0; p < novo->total_paginas; p++) {
                 novo->tabela_paginas[p].presente = 0;
@@ -90,7 +88,6 @@ int processo_listar_ordenados(const Processo **lista, int maximo) {
     for (int i = 0; i < MAX_PROCESSOS && quantidade < maximo; i++) {
         const Processo *p = processo_na_posicao(i);
         if (!p) continue;
-        /* Inserção ordenada: empurra para a direita quem tem PID maior. */
         int posicao = quantidade++;
         while (posicao > 0 && lista[posicao - 1]->identificador > p->identificador) {
             lista[posicao] = lista[posicao - 1];

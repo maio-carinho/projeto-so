@@ -7,7 +7,7 @@
 #include "processos/execucao.h"
 #include "processos/processos.h"
 
-#define TAMANHO_PADRAO_NORMAL_BYTES  (32L * 1024)     /* 8 páginas */
+#define TAMANHO_PADRAO_NORMAL_BYTES  (32L * 1024)     
 #define TAMANHO_PADRAO_CRITICO_BYTES (512L * 1024)
 #define MAX_BURST_MS                 10000
 #define MAX_PASSOS                   200
@@ -17,9 +17,6 @@ void processos_iniciar(void) {
     execucao_iniciar();
 }
 
-/* ---------- create_process ---------- */
-
-/* Lê uma syscall do texto: "read_disk at 3ms (duration: 4ms)" ou "random". */
 static int interpretar_syscall(const char *texto, long burst_ms, SyscallAgendada *syscall) {
     char copia[128];
     char *palavras[8];
@@ -32,7 +29,6 @@ static int interpretar_syscall(const char *texto, long burst_ms, SyscallAgendada
     if (quantidade == 0) return reg_erro("Syscall vazia: use \"read_disk at 3ms (duration: 4ms)\" ou \"random\"");
 
     if (strcmp(palavras[0], "random") == 0) {
-        /* Evento aleatório: o sistema sorteia o instante e a duração, sempre do mesmo jeito. */
         snprintf(syscall->nome, sizeof syscall->nome, "io_aleatoria");
         syscall->aleatoria = 1;
         syscall->instante_ms = burst_ms >= 2 ? 1 + execucao_sortear(burst_ms - 1) : burst_ms;
@@ -48,7 +44,6 @@ static int interpretar_syscall(const char *texto, long burst_ms, SyscallAgendada
             if (argumento_tempo_ms(palavras[++i], &syscall->instante_ms) != 0) return -1;
             achou_instante = 1;
         } else if (strncmp(palavras[i], "(duration:", 10) == 0 || strcmp(palavras[i], "duration:") == 0) {
-            /* O valor pode vir colado ("(duration:4ms)") ou na palavra seguinte. */
             const char *valor = palavras[i] + (palavras[i][0] == '(' ? 10 : 9);
             if (*valor == '\0' && i + 1 < quantidade) valor = palavras[++i];
             char numero[32];
@@ -92,10 +87,6 @@ static void imprimir_criacao(const Processo *processo) {
     else printf("Estado Inicial: PRONTO\n");
 }
 
-/* create_process aceita dois formatos:
- *   Etapa 4: --size ou --file (mostra o relatório de memória);
- *   Etapa 5: --burst, --priority, --syscall, --arrival (mostra o perfil de CPU).
- * No formato da Etapa 5 o --size é opcional. */
 int cmd_create_process(int argc, char **argv) {
     const char *nome = argumento_valor(argc, argv, "--name");
     const char *texto_tamanho = argumento_valor(argc, argv, "--size");
@@ -136,7 +127,6 @@ int cmd_create_process(int argc, char **argv) {
     if (texto_prioridade && (!argumento_numero(texto_prioridade, &prioridade) || prioridade < 1 || prioridade > MAX_PRIORIDADES))
         return reg_erro("Prioridade inválida: '%s' (use de 1 a %d; 1 = Alta)", texto_prioridade, MAX_PRIORIDADES);
     if (prioridade == 1) {
-        /* Como o 'nice' negativo do Unix: só o kernel dá prioridade máxima a um processo. */
         int negado = seguranca_exigir_kernel("create_process --priority 1 (Alta)");
         if (negado != 0) return negado;
     }
@@ -181,8 +171,6 @@ int cmd_create_process(int argc, char **argv) {
     memoria_registrar_operacao();
     return 0;
 }
-
-/* ---------- run_simulation ---------- */
 
 typedef struct {
     int moldura;
@@ -242,29 +230,37 @@ static void imprimir_evento_do_passo(const Processo *processo, const ResultadoPa
 }
 
 static void imprimir_resumo_das_molduras(const RegistroMoldura *registros, int quantidade) {
-    int ocultas = 0;
-    printf("[RESUMO DA GERÊNCIA DE MEMÓRIA (RAM DINÂMICA)]\n");
-    printf("+-----------------+---------------+----------------------+---------------------+\n");
-    printf("| Moldura RAM (F) | Processo/Pág  | Estado de Acesso     | Último Acesso (LRU) |\n");
-    printf("+-----------------+---------------+----------------------+---------------------+\n");
+    int visiveis = 0;
     for (int i = 0; i < quantidade; i++) {
-        const RegistroMoldura *r = &registros[i];
-        const Processo *dono = processo_por_identificador(r->identificador);
-        if (!dono || dono->memoria_liberada) { ocultas++; continue; }   /* a moldura já foi devolvida */
-
-        char processo_pagina[24], estado[24], ultimo[24];
-        snprintf(processo_pagina, sizeof processo_pagina, "PID %d / P%d", r->identificador, r->pagina);
-        if (!r->page_fault) snprintf(estado, sizeof estado, "HIT");
-        else snprintf(estado, sizeof estado, "%s", r->do_swap ? "PAGE FAULT (SWAP-IN)" : "PAGE FAULT (NEW)");
-        snprintf(ultimo, sizeof ultimo, "t = %ld ms", r->instante_ms);
-        printf("| Moldura %02d      | %-13s | %-20s | %-19s |\n", r->moldura, processo_pagina, estado, ultimo);
+        const Processo *dono = processo_por_identificador(registros[i].identificador);
+        if (dono && !dono->memoria_liberada) visiveis++;
     }
-    printf("+-----------------+---------------+----------------------+---------------------+\n");
-    if (ocultas > 0)
-        printf("(%d moldura(s) de processos já CONCLUÍDOS foram devolvidas e não aparecem na tabela)\n", ocultas);
+
+    if (visiveis > 0) {
+        printf("[RESUMO DA GERÊNCIA DE MEMÓRIA (RAM DINÂMICA)]\n");
+        printf("+-----------------+---------------+----------------------+---------------------+\n");
+        printf("| Moldura RAM (F) | Processo/Pág  | Estado de Acesso     | Último Acesso (LRU) |\n");
+        printf("+-----------------+---------------+----------------------+---------------------+\n");
+        for (int i = 0; i < quantidade; i++) {
+            const RegistroMoldura *r = &registros[i];
+            const Processo *dono = processo_por_identificador(r->identificador);
+            if (!dono || dono->memoria_liberada) continue;   
+
+            char processo_pagina[24], estado[24], ultimo[24];
+            snprintf(processo_pagina, sizeof processo_pagina, "PID %d / P%d", r->identificador, r->pagina);
+            if (!r->page_fault) snprintf(estado, sizeof estado, "HIT");
+            else snprintf(estado, sizeof estado, "%s", r->do_swap ? "PAGE FAULT (SWAP-IN)" : "PAGE FAULT (NEW)");
+            snprintf(ultimo, sizeof ultimo, "t = %ld ms", r->instante_ms);
+            printf("| Moldura %02d      | %-13s | %-20s | %-19s |\n", r->moldura, processo_pagina, estado, ultimo);
+        }
+        printf("+-----------------+---------------+----------------------+---------------------+\n");
+    }
+
+    if (visiveis < quantidade)
+        printf("(%d moldura(s) de processos já CONCLUÍDOS foram devolvidas%s)\n", quantidade - visiveis,
+               visiveis > 0 ? " e não aparecem na tabela" : ": não há molduras para mostrar");
 }
 
-/* Guarda a última situação de cada moldura tocada durante o comando. */
 static void anotar_moldura(RegistroMoldura *registros, int *quantidade, const Processo *processo, const ResultadoPasso *r) {
     if (!r->referenciou_pagina) return;
     RegistroMoldura novo = { r->acesso.moldura, processo->identificador, r->pagina, !r->acesso.acerto,
@@ -275,8 +271,6 @@ static void anotar_moldura(RegistroMoldura *registros, int *quantidade, const Pr
     registros[(*quantidade)++] = novo;
 }
 
-/* Executa a CPU passo a passo (1 passo = 1ms). Com --process roda só aquele processo;
- * sem --process, a cada passo roda o processo que o escalonador escolheria. */
 int cmd_run_simulation(int argc, char **argv) {
     const char *nome = argumento_valor(argc, argv, "--process");
     const char *texto_passos = argumento_valor(argc, argv, "--steps");
@@ -323,7 +317,7 @@ int cmd_run_simulation(int argc, char **argv) {
         execucao_imprimir_eventos();
 
         if (processo->estado == ESTADO_EXECUTANDO && !alvo) execucao_devolver_cpu(processo, 0);
-        if (alvo && alvo->estado != ESTADO_EXECUTANDO) break;    /* bloqueou ou terminou */
+        if (alvo && alvo->estado != ESTADO_EXECUTANDO) break;    
     }
 
     if (alvo) execucao_devolver_cpu(alvo, 0);
@@ -331,9 +325,6 @@ int cmd_run_simulation(int argc, char **argv) {
     return 0;
 }
 
-/* ---------- process_status ---------- */
-
-/* printf conta bytes, e letras acentuadas têm 2 bytes em UTF-8; aqui o preenchimento conta caracteres. */
 static void imprimir_preenchido(const char *texto, int largura) {
     int caracteres = 0;
     for (const char *c = texto; *c; c++)

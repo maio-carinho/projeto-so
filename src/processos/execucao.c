@@ -202,6 +202,18 @@ static SyscallAgendada *syscall_vencida(Processo *processo) {
     return NULL;
 }
 
+static void encerrar_threads(Processo *processo) {
+    for (int i = 0; i < MAX_THREADS_POR_PROCESSO; i++) {
+        if (!processo->threads[i].em_uso) continue;
+        processo->threads[i].estado = ESTADO_CONCLUIDO;
+        processo->threads[i].mutex_esperado = -1;
+    }
+    for (int i = 0; i < MAX_MUTEXES_POR_PROCESSO; i++) {
+        processo->mutexes[i].dono = -1;
+        processo->mutexes[i].quantidade_espera = 0;
+    }
+}
+
 void execucao_executar_passo(Processo *processo, ResultadoPasso *resultado) {
     memset(resultado, 0, sizeof *resultado);
     long instante = relogio_ms + 1;
@@ -224,6 +236,7 @@ void execucao_executar_passo(Processo *processo, ResultadoPasso *resultado) {
         processo->estado = ESTADO_CONCLUIDO;
         processo->conclusao_ms = relogio_ms;
         memoria_liberar_processo(processo, &resultado->liberacao);
+        encerrar_threads(processo);
         resultado->evento = EVENTO_CONCLUIDO;
         return;
     }
